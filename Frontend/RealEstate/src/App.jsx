@@ -1,6 +1,10 @@
 import './App.css'
 import CityScene from './components/CityScene.jsx'
 import Logos from './components/Logos.jsx'
+import { useEffect, useState } from 'react'
+import Login from './pages/Login.jsx'
+import Signup from './pages/Signup.jsx'
+import { apiFetch, clearAuthTokens, getAccessToken, logoutApi } from './api/client.js'
 
 function Stat({ label, value }) {
   return (
@@ -21,6 +25,40 @@ function SectionHeading({ title, subtitle }) {
 }
 
 export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(!!getAccessToken())
+  const [showSignup, setShowSignup] = useState(false)
+  const [profile, setProfile] = useState(null)
+
+  useEffect(() => {
+    if (!isAuthenticated) return
+    ;(async () => {
+      const res = await apiFetch('/api/auth/me/')
+      if (res.ok) {
+        const data = await res.json()
+        setProfile(data)
+      } else if (res.status === 401) {
+        setIsAuthenticated(false)
+      }
+    })()
+  }, [isAuthenticated])
+
+  if (!isAuthenticated) {
+    return (
+      <div>
+        {showSignup ? (
+          <Signup onSuccess={() => setIsAuthenticated(true)} />
+        ) : (
+          <Login onSuccess={() => setIsAuthenticated(true)} />
+        )}
+        <div className="fixed bottom-6 right-6">
+          <button className="btn-secondary" onClick={() => setShowSignup(s => !s)}>
+            {showSignup ? 'Have an account? Login' : "Don't have an account? Sign up"}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="relative min-h-screen overflow-hidden">
       <header className="sticky top-0 z-20">
@@ -35,7 +73,10 @@ export default function App() {
             <a href="#reports" className="hover:text-slate-100" style={{textShadow:'0 2px 12px rgba(0,0,0,0.45)'}}>Reports</a>
             <a href="#team" className="hover:text-slate-100" style={{textShadow:'0 2px 12px rgba(0,0,0,0.45)'}}>For Engineers</a>
           </div>
-          <a href="#cta" className="btn-primary text-sm" style={{padding:'0.55rem 0.95rem'}}>Get Access</a>
+          <div className="flex items-center gap-3">
+            {profile && <span className="text-sm text-slate-300">Hi, {profile.username}</span>}
+            <button onClick={async () => { await logoutApi(); clearAuthTokens(); setIsAuthenticated(false); }} className="btn-secondary text-sm" style={{padding:'0.55rem 0.95rem'}}>Logout</button>
+          </div>
         </nav>
       </header>
 
