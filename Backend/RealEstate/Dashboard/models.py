@@ -143,19 +143,49 @@ class InvestmentMetrics(models.Model):
             self.risk_score = min(
                 10, max(1, float(self.price_to_rent_ratio) / 10))
 
-        # Investment Score (composite of multiple factors)
-        score_factors = []
-        if self.cap_rate:
-            # Cap rate weighted 10x
-            score_factors.append(float(self.cap_rate) * 10)
-        if self.profit_margin:
-            score_factors.append(float(self.profit_margin))
-        if self.risk_score:
-            # Lower risk = higher score
-            score_factors.append((10 - float(self.risk_score)) * 5)
+        # Investment Score (sophisticated real estate investment scoring)
+        score_components = {}
 
-        if score_factors:
-            self.investment_score = sum(score_factors) / len(score_factors)
+        # Cap Rate Component (Weight: 40%)
+        if self.cap_rate:
+            # 10% cap rate = 100 points
+            cap_rate_score = min(100, max(0, float(self.cap_rate) * 10))
+            score_components['cap_rate'] = cap_rate_score * 0.4
+
+        # Cash Flow Component (Weight: 25%)
+        if self.net_operating_income and self.property_ref.current_price:
+            monthly_noi = float(self.net_operating_income) / 12
+            # Score based on positive monthly cash flow
+            # $100/month = 1 point
+            cashflow_score = min(100, max(0, monthly_noi / 100))
+            score_components['cashflow'] = cashflow_score * 0.25
+
+        # Appreciation Potential (Weight: 20%)
+        if self.profit_margin:
+            # 50% profit = 100 points
+            appreciation_score = min(
+                100, max(0, float(self.profit_margin) * 2))
+            score_components['appreciation'] = appreciation_score * 0.2
+
+        # Market Efficiency (Weight: 10%)
+        if self.price_to_rent_ratio:
+            # Lower ratio = better deal
+            # Ratio of 15 = 50 points
+            efficiency_score = min(
+                100, max(0, 200 - float(self.price_to_rent_ratio) * 10))
+            score_components['efficiency'] = efficiency_score * 0.1
+
+        # Risk Adjustment (Weight: 5%)
+        if self.risk_score:
+            risk_adjustment = (10 - float(self.risk_score)) * \
+                10  # Lower risk = higher score
+            score_components['risk'] = risk_adjustment * 0.05
+
+        # Calculate final weighted score
+        if score_components:
+            self.investment_score = sum(score_components.values())
+        else:
+            self.investment_score = 0
 
         self.save()
 

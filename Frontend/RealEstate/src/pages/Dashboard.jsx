@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { apiFetch, clearAuthTokens, logoutApi } from '../api/client.js'
 
 function StatCard({ label, value, subtitle, loading }) {
@@ -100,7 +100,7 @@ export default function Dashboard({ profile, onLogout }) {
   const [properties, setProperties] = useState([])
   const [loading, setLoading] = useState(true)
   const [propertiesLoading, setPropertiesLoading] = useState(true)
-  const [dataSource, setDataSource] = useState(null)
+  // Removed unused dataSource state
   const [filters, setFilters] = useState({
     property_type: '',
     sort_by: 'investment_score',
@@ -111,16 +111,7 @@ export default function Dashboard({ profile, onLogout }) {
   const [address2, setAddress2] = useState('')
   const [showAddPropertyForm, setShowAddPropertyForm] = useState(false)
 
-  useEffect(() => {
-    fetchDashboardStats()
-    fetchProperties()
-  }, [])
-
-  useEffect(() => {
-    fetchProperties()
-  }, [filters])
-
-  const fetchDashboardStats = async () => {
+  const fetchDashboardStats = useCallback(async () => {
     try {
       const res = await apiFetch('/api/dashboard-stats/')
       if (res.ok) {
@@ -132,9 +123,9 @@ export default function Dashboard({ profile, onLogout }) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
-  const fetchProperties = async () => {
+  const fetchProperties = useCallback(async () => {
     setPropertiesLoading(true)
     try {
       const params = new URLSearchParams()
@@ -146,14 +137,20 @@ export default function Dashboard({ profile, onLogout }) {
       if (res.ok) {
         const data = await res.json()
         setProperties(data.results || [])
-        setDataSource(data)
       }
     } catch (error) {
       console.error('Failed to fetch properties:', error)
     } finally {
       setPropertiesLoading(false)
     }
-  }
+  }, [filters])
+
+  useEffect(() => {
+    fetchDashboardStats()
+    fetchProperties()
+  }, [fetchDashboardStats, fetchProperties])
+
+  // Fetch functions moved up as useCallback hooks
 
   const handleSyncData = async (address1, address2) => {
     if (!address1 || !address2) {
@@ -359,39 +356,101 @@ export default function Dashboard({ profile, onLogout }) {
           </div>
         )}
 
-        {/* Top Properties */}
-        {dashboardStats?.top_properties?.length > 0 && (
+        {/* Top Investment Opportunities */}
+        {properties.length > 0 && (
           <div className="mb-8">
-            <h2 className="text-lg font-semibold text-slate-100 mb-4">Top Performers</h2>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-              {dashboardStats.top_properties.map((prop, index) => (
-                <div key={index} className="card text-center">
-                  <div className="text-xs text-slate-400 mb-1">#{index + 1}</div>
-                  <div className="text-sm font-semibold text-slate-100 mb-1">{prop.address}</div>
-                  <div className="text-xs text-slate-400 mb-2">{prop.city}, {prop.state}</div>
-                  <div className="text-lg font-bold text-green-400">{prop.investment_score.toFixed(1)}</div>
-                  <div className="text-xs text-slate-400">{prop.cap_rate.toFixed(1)}% Cap Rate</div>
-                </div>
-              ))}
+            <h2 className="text-lg font-semibold text-slate-100 mb-4">🏆 Top Investment Opportunities</h2>
+            <div className="space-y-4">
+              {properties
+                .filter(p => p.metrics?.investment_score && p.current_price && p.estimated_rent)
+                .sort((a, b) => (b.metrics?.investment_score || 0) - (a.metrics?.investment_score || 0))
+                .slice(0, 5)
+                .map((property, index) => (
+                  <div key={property.id} className="glass rounded-xl p-6 hover:border-slate-600 transition-colors">
+                    <div className="flex justify-between items-start mb-4">
+                      <div className="flex items-center gap-4">
+                        <div className="bg-gradient-to-r from-green-500 to-blue-500 text-white w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm">
+                          #{index + 1}
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-semibold text-slate-100">{property.address}</h3>
+                          <p className="text-slate-400">{property.city}, {property.state}</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-2xl font-bold text-green-400">
+                          {property.metrics.investment_score.toFixed(1)}
+                        </div>
+                        <div className="text-xs text-slate-400">Investment Score</div>
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                      <div className="text-center">
+                        <div className="text-lg font-semibold text-slate-100">
+                          ${property.current_price.toLocaleString()}
+                        </div>
+                        <div className="text-xs text-slate-400">Purchase Price</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-lg font-semibold text-green-400">
+                          {property.metrics.cap_rate.toFixed(1)}%
+                        </div>
+                        <div className="text-xs text-slate-400">Cap Rate</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-lg font-semibold text-blue-400">
+                          ${property.estimated_rent.toLocaleString()}/mo
+                        </div>
+                        <div className="text-xs text-slate-400">Monthly Rent</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-lg font-semibold text-purple-400">
+                          ${property.metrics.net_operating_income?.toLocaleString() || 'N/A'}
+                        </div>
+                        <div className="text-xs text-slate-400">Annual NOI</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-lg font-semibold text-yellow-400">
+                          {property.metrics.profit_margin ? `${property.metrics.profit_margin.toFixed(1)}%` : 'N/A'}
+                        </div>
+                        <div className="text-xs text-slate-400">Profit Margin</div>
+                      </div>
+                    </div>
+                    
+                    <div className="mt-4 pt-4 border-t border-slate-700">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-slate-400">
+                          💰 Potential Profit: <span className="text-green-400 font-semibold">
+                            ${property.metrics.estimated_profit ? property.metrics.estimated_profit.toLocaleString() : 'N/A'}
+                          </span>
+                        </span>
+                        <span className="text-slate-400">
+                          🏠 {property.bedrooms}bd/{property.bathrooms}ba • {property.square_feet?.toLocaleString() || 'N/A'} sqft
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
             </div>
+            
+            {properties.filter(p => p.metrics?.investment_score).length === 0 && (
+              <div className="text-center py-8 text-slate-400">
+                No investment metrics available yet. Add properties with complete pricing data to see opportunities.
+              </div>
+            )}
           </div>
         )}
 
-        {/* Investment Opportunities */}
+        {/* All Properties Portfolio */}
         <div>
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-lg font-semibold text-slate-100">
-              Investment Opportunities ({properties.length})
+              Property Portfolio ({properties.length})
             </h2>
-            {dataSource && (
-              <div className="flex items-center gap-2 text-sm">
-                <div className="flex items-center gap-1 text-green-400">
-                  <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                  <span>Real-time Data</span>
-                </div>
-                <span className="text-slate-400">from {dataSource.search_location}</span>
-              </div>
-            )}
+            <div className="text-sm text-slate-400">
+              {properties.filter(p => p.metrics?.investment_score).length} properties analyzed • Real-time ATTOM data
+            </div>
           </div>
           
           {propertiesLoading ? (
