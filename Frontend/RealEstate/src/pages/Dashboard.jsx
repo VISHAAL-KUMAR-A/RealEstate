@@ -48,23 +48,29 @@ function PropertyCard({ property, onAddToWatchlist }) {
         </div>
       </div>
       
-      <div className="grid grid-cols-3 gap-3 mb-3">
+      <div className="grid grid-cols-4 gap-2 mb-3">
         <div className="text-center">
           <div className="text-xs text-slate-400">Score</div>
-          <div className="text-lg font-bold text-green-400">
-            {metrics.investment_score ? metrics.investment_score.toFixed(1) : 'N/A'}
+          <div className="text-sm font-bold text-green-400">
+            {metrics?.investment_score ? metrics.investment_score.toFixed(1) : 'N/A'}
           </div>
         </div>
         <div className="text-center">
           <div className="text-xs text-slate-400">Cap Rate</div>
-          <div className="text-lg font-bold text-blue-400">
-            {metrics.cap_rate ? `${metrics.cap_rate.toFixed(1)}%` : 'N/A'}
+          <div className="text-sm font-bold text-blue-400">
+            {metrics?.cap_rate ? `${metrics.cap_rate.toFixed(1)}%` : 'N/A'}
+          </div>
+        </div>
+        <div className="text-center">
+          <div className="text-xs text-slate-400">ROI</div>
+          <div className="text-sm font-bold text-purple-400">
+            {metrics?.roi ? `${metrics.roi.toFixed(1)}%` : 'N/A'}
           </div>
         </div>
         <div className="text-center">
           <div className="text-xs text-slate-400">Yield</div>
-          <div className="text-lg font-bold text-purple-400">
-            {metrics.gross_rental_yield ? `${metrics.gross_rental_yield.toFixed(1)}%` : 'N/A'}
+          <div className="text-sm font-bold text-yellow-400">
+            {metrics?.gross_rental_yield ? `${metrics.gross_rental_yield.toFixed(1)}%` : 'N/A'}
           </div>
         </div>
       </div>
@@ -106,6 +112,31 @@ export default function Dashboard({ profile, onLogout }) {
     sort_by: 'investment_score',
     order: 'desc'
   })
+  const [advancedFilters, setAdvancedFilters] = useState({
+    ordering: '-metrics__investment_score',
+    min_cap_rate: '',
+    max_cap_rate: '',
+    min_roi: '',
+    max_roi: '',
+    min_cash_on_cash_return: '',
+    max_cash_on_cash_return: '',
+    min_price: '',
+    max_price: '',
+    min_noi: '',
+    max_noi: '',
+    property_type: '',
+    has_metrics: true,
+    is_profitable: false,
+    high_cap_rate: false,
+    good_cash_flow: false
+  })
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
+  const [bestDeals, setBestDeals] = useState([])
+  const [bestDealsLoading, setBestDealsLoading] = useState(false)
+  const [filterOptions, setFilterOptions] = useState({
+    sort_options: [],
+    property_types: []
+  })
   const [syncing, setSyncing] = useState(false)
   const [address1, setAddress1] = useState('')
   const [address2, setAddress2] = useState('')
@@ -145,10 +176,34 @@ export default function Dashboard({ profile, onLogout }) {
     }
   }, [filters])
 
+  const fetchBestDeals = useCallback(async () => {
+    setBestDealsLoading(true)
+    try {
+      const params = new URLSearchParams()
+      Object.entries(advancedFilters).forEach(([key, value]) => {
+        if (value !== '' && value !== false) {
+          params.append(key, value)
+        }
+      })
+      
+      const res = await apiFetch(`/api/best-deals/?${params}`)
+      if (res.ok) {
+        const data = await res.json()
+        setBestDeals(data.results || [])
+        setFilterOptions(data.filter_options || { sort_options: [], property_types: [] })
+      }
+    } catch (error) {
+      console.error('Failed to fetch best deals:', error)
+    } finally {
+      setBestDealsLoading(false)
+    }
+  }, [advancedFilters])
+
   useEffect(() => {
     fetchDashboardStats()
     fetchProperties()
-  }, [fetchDashboardStats, fetchProperties])
+    fetchBestDeals()
+  }, [fetchDashboardStats, fetchProperties, fetchBestDeals])
 
   // Fetch functions moved up as useCallback hooks
 
@@ -179,6 +234,7 @@ export default function Dashboard({ profile, onLogout }) {
         // Refresh data
         fetchDashboardStats()
         fetchProperties()
+        fetchBestDeals()
       } else {
         const error = await res.json()
         alert(`❌ Failed to add property: ${error.error || error.details}`)
@@ -285,6 +341,16 @@ export default function Dashboard({ profile, onLogout }) {
               <option value="desc">High to Low</option>
               <option value="asc">Low to High</option>
             </select>
+            <button
+              onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
+              className={`px-4 py-2 text-sm rounded-lg transition-colors ${
+                showAdvancedFilters 
+                  ? 'bg-blue-600 hover:bg-blue-700 text-white' 
+                  : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
+              }`}
+            >
+              🔍 Best Deals Filter
+            </button>
           </div>
           
           <button
@@ -294,6 +360,201 @@ export default function Dashboard({ profile, onLogout }) {
             Add Property from ATTOM
           </button>
         </div>
+
+        {/* Advanced Best Deals Filtering */}
+        {showAdvancedFilters && (
+          <div className="mb-8 glass rounded-xl p-6">
+            <h3 className="text-lg font-semibold text-slate-100 mb-4">🎯 Best Investment Deals Filter</h3>
+            <div className="text-sm text-slate-400 mb-4">
+              Apply advanced filters to find the best investment opportunities based on your criteria.
+            </div>
+            
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {/* Sorting */}
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">Sort By</label>
+                <select
+                  value={advancedFilters.ordering}
+                  onChange={(e) => setAdvancedFilters(prev => ({...prev, ordering: e.target.value}))}
+                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-slate-100 focus:border-blue-500 focus:outline-none"
+                >
+                  {filterOptions.sort_options.map(option => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Cap Rate Range */}
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">Cap Rate (%)</label>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    placeholder="Min"
+                    value={advancedFilters.min_cap_rate}
+                    onChange={(e) => setAdvancedFilters(prev => ({...prev, min_cap_rate: e.target.value}))}
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-slate-100 placeholder-slate-400 focus:border-blue-500 focus:outline-none"
+                  />
+                  <input
+                    type="number"
+                    placeholder="Max"
+                    value={advancedFilters.max_cap_rate}
+                    onChange={(e) => setAdvancedFilters(prev => ({...prev, max_cap_rate: e.target.value}))}
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-slate-100 placeholder-slate-400 focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* ROI Range */}
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">ROI (%)</label>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    placeholder="Min"
+                    value={advancedFilters.min_roi}
+                    onChange={(e) => setAdvancedFilters(prev => ({...prev, min_roi: e.target.value}))}
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-slate-100 placeholder-slate-400 focus:border-blue-500 focus:outline-none"
+                  />
+                  <input
+                    type="number"
+                    placeholder="Max"
+                    value={advancedFilters.max_roi}
+                    onChange={(e) => setAdvancedFilters(prev => ({...prev, max_roi: e.target.value}))}
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-slate-100 placeholder-slate-400 focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Cash-on-Cash Return Range */}
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">Cash-on-Cash Return (%)</label>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    placeholder="Min"
+                    value={advancedFilters.min_cash_on_cash_return}
+                    onChange={(e) => setAdvancedFilters(prev => ({...prev, min_cash_on_cash_return: e.target.value}))}
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-slate-100 placeholder-slate-400 focus:border-blue-500 focus:outline-none"
+                  />
+                  <input
+                    type="number"
+                    placeholder="Max"
+                    value={advancedFilters.max_cash_on_cash_return}
+                    onChange={(e) => setAdvancedFilters(prev => ({...prev, max_cash_on_cash_return: e.target.value}))}
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-slate-100 placeholder-slate-400 focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Price Range */}
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">Price Range</label>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    placeholder="Min $"
+                    value={advancedFilters.min_price}
+                    onChange={(e) => setAdvancedFilters(prev => ({...prev, min_price: e.target.value}))}
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-slate-100 placeholder-slate-400 focus:border-blue-500 focus:outline-none"
+                  />
+                  <input
+                    type="number"
+                    placeholder="Max $"
+                    value={advancedFilters.max_price}
+                    onChange={(e) => setAdvancedFilters(prev => ({...prev, max_price: e.target.value}))}
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-slate-100 placeholder-slate-400 focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* NOI Range */}
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">Net Operating Income</label>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    placeholder="Min $"
+                    value={advancedFilters.min_noi}
+                    onChange={(e) => setAdvancedFilters(prev => ({...prev, min_noi: e.target.value}))}
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-slate-100 placeholder-slate-400 focus:border-blue-500 focus:outline-none"
+                  />
+                  <input
+                    type="number"
+                    placeholder="Max $"
+                    value={advancedFilters.max_noi}
+                    onChange={(e) => setAdvancedFilters(prev => ({...prev, max_noi: e.target.value}))}
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-slate-100 placeholder-slate-400 focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Filters */}
+            <div className="mt-6">
+              <h4 className="text-sm font-medium text-slate-300 mb-3">Quick Filters</h4>
+              <div className="flex flex-wrap gap-3">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={advancedFilters.is_profitable}
+                    onChange={(e) => setAdvancedFilters(prev => ({...prev, is_profitable: e.target.checked}))}
+                    className="rounded bg-slate-800 border-slate-600 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="text-sm text-slate-300">Profitable Only</span>
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={advancedFilters.high_cap_rate}
+                    onChange={(e) => setAdvancedFilters(prev => ({...prev, high_cap_rate: e.target.checked}))}
+                    className="rounded bg-slate-800 border-slate-600 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="text-sm text-slate-300">High Cap Rate (≥8%)</span>
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={advancedFilters.good_cash_flow}
+                    onChange={(e) => setAdvancedFilters(prev => ({...prev, good_cash_flow: e.target.checked}))}
+                    className="rounded bg-slate-800 border-slate-600 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="text-sm text-slate-300">Positive Cash Flow</span>
+                </label>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="mt-6 flex gap-3">
+              <button
+                onClick={() => {
+                  // Reset filters
+                  setAdvancedFilters({
+                    ordering: '-metrics__investment_score',
+                    min_cap_rate: '',
+                    max_cap_rate: '',
+                    min_roi: '',
+                    max_roi: '',
+                    min_cash_on_cash_return: '',
+                    max_cash_on_cash_return: '',
+                    min_price: '',
+                    max_price: '',
+                    min_noi: '',
+                    max_noi: '',
+                    property_type: '',
+                    has_metrics: true,
+                    is_profitable: false,
+                    high_cap_rate: false,
+                    good_cash_flow: false
+                  })
+                }}
+                className="px-4 py-2 text-slate-400 hover:text-slate-200 border border-slate-600 rounded-lg hover:border-slate-500 transition-colors"
+              >
+                Reset Filters
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Add Property Form */}
         {showAddPropertyForm && (
@@ -356,8 +617,99 @@ export default function Dashboard({ profile, onLogout }) {
           </div>
         )}
 
+        {/* Best Investment Deals (Filtered Results) */}
+        {showAdvancedFilters && (
+          <div className="mb-8">
+            <h2 className="text-lg font-semibold text-slate-100 mb-4">🎯 Best Investment Deals ({bestDeals.length} found)</h2>
+            {bestDealsLoading ? (
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {[...Array(6)].map((_, i) => <LoadingCard key={i} />)}
+              </div>
+            ) : bestDeals.length > 0 ? (
+              <div className="space-y-4">
+                {bestDeals.slice(0, 10).map((property, index) => (
+                  <div key={property.id} className="glass rounded-xl p-6 hover:border-slate-600 transition-colors">
+                    <div className="flex justify-between items-start mb-4">
+                      <div className="flex items-center gap-4">
+                        <div className="bg-gradient-to-r from-green-500 to-blue-500 text-white w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm">
+                          #{index + 1}
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-semibold text-slate-100">{property.address}</h3>
+                          <p className="text-slate-400">{property.city}, {property.state}</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-2xl font-bold text-green-400">
+                          {property.metrics?.investment_score?.toFixed(1) || 'N/A'}
+                        </div>
+                        <div className="text-xs text-slate-400">Investment Score</div>
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                      <div className="text-center">
+                        <div className="text-lg font-semibold text-slate-100">
+                          ${property.current_price?.toLocaleString() || 'N/A'}
+                        </div>
+                        <div className="text-xs text-slate-400">Purchase Price</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-lg font-semibold text-green-400">
+                          {property.metrics?.cap_rate?.toFixed(1) || 'N/A'}%
+                        </div>
+                        <div className="text-xs text-slate-400">Cap Rate</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-lg font-semibold text-purple-400">
+                          {property.metrics?.roi?.toFixed(1) || 'N/A'}%
+                        </div>
+                        <div className="text-xs text-slate-400">ROI</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-lg font-semibold text-blue-400">
+                          ${property.estimated_rent?.toLocaleString() || 'N/A'}/mo
+                        </div>
+                        <div className="text-xs text-slate-400">Monthly Rent</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-lg font-semibold text-yellow-400">
+                          ${property.metrics?.net_operating_income?.toLocaleString() || 'N/A'}
+                        </div>
+                        <div className="text-xs text-slate-400">Annual NOI</div>
+                      </div>
+                    </div>
+                    
+                    <div className="mt-4 pt-4 border-t border-slate-700">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-slate-400">
+                          💰 Potential Profit: <span className="text-green-400 font-semibold">
+                            ${property.metrics?.estimated_profit?.toLocaleString() || 'N/A'}
+                          </span>
+                        </span>
+                        <span className="text-slate-400">
+                          💵 Cash-on-Cash: <span className="text-blue-400 font-semibold">
+                            {property.metrics?.cash_on_cash_return?.toFixed(1) || 'N/A'}%
+                          </span>
+                        </span>
+                        <span className="text-slate-400">
+                          🏠 {property.bedrooms}bd/{property.bathrooms}ba • {property.square_feet?.toLocaleString() || 'N/A'} sqft
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8 text-slate-400">
+                No properties match your advanced filter criteria. Try adjusting your filters.
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Top Investment Opportunities */}
-        {properties.length > 0 && (
+        {!showAdvancedFilters && properties.length > 0 && (
           <div className="mb-8">
             <h2 className="text-lg font-semibold text-slate-100 mb-4">🏆 Top Investment Opportunities</h2>
             <div className="space-y-4">
