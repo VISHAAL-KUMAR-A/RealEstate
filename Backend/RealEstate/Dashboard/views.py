@@ -120,6 +120,7 @@ def investment_opportunities(request):
                 'net_operating_income': float(prop.metrics.net_operating_income) if prop.metrics.net_operating_income else None,
                 'price_to_rent_ratio': float(prop.metrics.price_to_rent_ratio) if prop.metrics.price_to_rent_ratio else None,
                 'risk_score': float(prop.metrics.risk_score) if prop.metrics.risk_score else None,
+                'estimated_profit': float(prop.metrics.estimated_profit) if prop.metrics.estimated_profit else None,
             }
         else:
             property_data['metrics'] = None
@@ -393,7 +394,6 @@ def properties(request):
                 'price_to_rent_ratio': float(prop.metrics.price_to_rent_ratio) if prop.metrics.price_to_rent_ratio else None,
                 'risk_score': float(prop.metrics.risk_score) if prop.metrics.risk_score else None,
                 'estimated_profit': float(prop.metrics.estimated_profit) if prop.metrics.estimated_profit else None,
-                'profit_margin': float(prop.metrics.profit_margin) if prop.metrics.profit_margin else None,
             }
         else:
             property_data['metrics'] = None

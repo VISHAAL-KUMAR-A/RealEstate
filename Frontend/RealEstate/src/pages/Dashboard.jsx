@@ -385,7 +385,7 @@ export default function Dashboard({ profile, onLogout }) {
                       </div>
                     </div>
                     
-                    <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                       <div className="text-center">
                         <div className="text-lg font-semibold text-slate-100">
                           ${property.current_price.toLocaleString()}
@@ -409,12 +409,6 @@ export default function Dashboard({ profile, onLogout }) {
                           ${property.metrics.net_operating_income?.toLocaleString() || 'N/A'}
                         </div>
                         <div className="text-xs text-slate-400">Annual NOI</div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-lg font-semibold text-yellow-400">
-                          {property.metrics.profit_margin ? `${property.metrics.profit_margin.toFixed(1)}%` : 'N/A'}
-                        </div>
-                        <div className="text-xs text-slate-400">Profit Margin</div>
                       </div>
                     </div>
                     

@@ -149,3 +149,4 @@ CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', '').split(',')
 
 # External API Keys
 ATTOM_API_KEY = os.getenv('ATTOM_API_KEY')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')

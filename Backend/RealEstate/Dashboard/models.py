@@ -84,8 +84,6 @@ class InvestmentMetrics(models.Model):
     # Profitability metrics
     estimated_profit = models.DecimalField(
         max_digits=12, decimal_places=2, null=True, blank=True)
-    profit_margin = models.DecimalField(
-        max_digits=5, decimal_places=2, null=True, blank=True)  # %
     price_to_rent_ratio = models.DecimalField(
         max_digits=6, decimal_places=2, null=True, blank=True)
 
@@ -131,12 +129,14 @@ class InvestmentMetrics(models.Model):
         # Price to Rent Ratio
         self.price_to_rent_ratio = self.property_ref.current_price / annual_rent
 
-        # Estimated Profit (based on estimated value vs current price)
-        if self.property_ref.estimated_value:
+        # Estimated Profit - Try OpenAI prediction first, fallback to simple calculation
+        ai_predicted_profit = self._get_ai_predicted_profit()
+        if ai_predicted_profit is not None:
+            self.estimated_profit = ai_predicted_profit
+        elif self.property_ref.estimated_value and self.property_ref.current_price:
+            # Fallback to simple calculation
             self.estimated_profit = self.property_ref.estimated_value - \
                 self.property_ref.current_price
-            self.profit_margin = (self.estimated_profit /
-                                  self.property_ref.current_price) * 100
 
         # Simple risk score (lower price-to-rent ratio = lower risk)
         if self.price_to_rent_ratio:
@@ -160,11 +160,12 @@ class InvestmentMetrics(models.Model):
             cashflow_score = min(100, max(0, monthly_noi / 100))
             score_components['cashflow'] = cashflow_score * 0.25
 
-        # Appreciation Potential (Weight: 20%)
-        if self.profit_margin:
+        # Appreciation Potential (Weight: 20%) - Based on estimated profit
+        if self.estimated_profit and self.property_ref.current_price:
+            profit_percentage = (
+                float(self.estimated_profit) / float(self.property_ref.current_price)) * 100
             # 50% profit = 100 points
-            appreciation_score = min(
-                100, max(0, float(self.profit_margin) * 2))
+            appreciation_score = min(100, max(0, profit_percentage * 2))
             score_components['appreciation'] = appreciation_score * 0.2
 
         # Market Efficiency (Weight: 10%)
@@ -188,6 +189,18 @@ class InvestmentMetrics(models.Model):
             self.investment_score = 0
 
         self.save()
+
+    def _get_ai_predicted_profit(self):
+        """Get AI-predicted profit using OpenAI service"""
+        try:
+            from .services import OpenAIProfitPredictor
+            predictor = OpenAIProfitPredictor()
+            return predictor.predict_potential_profit(self.property_ref)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Could not get AI profit prediction: {e}")
+            return None
 
     def __str__(self):
         return f"Metrics for {self.property_ref.address}"
