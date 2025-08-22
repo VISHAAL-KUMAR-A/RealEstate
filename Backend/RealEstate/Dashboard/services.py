@@ -190,6 +190,9 @@ class PropertyDataSyncer:
     def _sync_attom_property(self, property_data: Dict, city: str, state: str) -> Optional[Property]:
         """Convert ATTOM API response to Property model"""
         try:
+            logger.info(
+                f"Processing ATTOM property data: {property_data.keys()}")
+
             # Extract data from real ATTOM API response structure
             address_info = property_data.get('address', {})
             summary_info = property_data.get('summary', {})
@@ -197,6 +200,8 @@ class PropertyDataSyncer:
             assessment_info = property_data.get('assessment', {})
             sale_info = property_data.get('sale', {})
             location_info = property_data.get('location', {})
+            lot_info = property_data.get('lot', {})
+            identifier_info = property_data.get('identifier', {})
 
             # Extract address information
             address_line = address_info.get('line1', '')
@@ -207,6 +212,12 @@ class PropertyDataSyncer:
             prop_city = address_info.get('locality', '')
             prop_state = address_info.get('countrySubd', '')
             zip_code = address_info.get('postal1', '')
+
+            # Extract ATTOM ID
+            attom_id = identifier_info.get(
+                'attomId') or identifier_info.get('Id')
+            if attom_id:
+                attom_id = str(attom_id)
 
             # Extract coordinates
             latitude = location_info.get('latitude')
@@ -219,43 +230,74 @@ class PropertyDataSyncer:
             # Extract property details
             property_type = summary_info.get(
                 'propertyType', 'Single Family Residence')
-            year_built = summary_info.get('yearBuilt')
+            year_built = summary_info.get(
+                'yearBuilt') or summary_info.get('yearbuilt')
+
+            # Extract lot size
+            lot_size = lot_info.get('lotSize1') or lot_info.get('lotsize1')
+            if lot_size:
+                lot_size = Decimal(str(lot_size))
 
             # Extract building details
             size_info = building_info.get('size', {})
             rooms_info = building_info.get('rooms', {})
 
-            square_feet = size_info.get(
-                'livingSize') or size_info.get('bldgSize')
+            square_feet = size_info.get('livingSize') or size_info.get(
+                'bldgSize') or size_info.get('livingsize') or size_info.get('bldgsize')
             bedrooms = rooms_info.get('beds')
-            bathrooms = rooms_info.get('bathsTotal')
+            bathrooms = rooms_info.get(
+                'bathsTotal') or rooms_info.get('bathstotal')
 
             # Extract pricing information
             current_price = None
             estimated_value = None
+            tax_assessment = None
+            annual_taxes = None
 
-            # Try to get sale price
+            # Try to get sale price - handle both response structures
             if sale_info:
+                # Method 1: amount structure (expanded profile)
                 amount_info = sale_info.get('amount', {})
                 if amount_info:
                     current_price = amount_info.get('saleAmt')
-                else:
-                    # Try alternative structure
+                    logger.info(
+                        f"Found sale price in amount structure: {current_price}")
+
+                # Method 2: saleAmountData structure (basic profile)
+                if not current_price:
                     sale_amount_data = sale_info.get('saleAmountData', {})
                     if sale_amount_data:
                         current_price = sale_amount_data.get('saleAmt')
+                        logger.info(
+                            f"Found sale price in saleAmountData: {current_price}")
 
-            # Try to get market value from assessment
+            # Try to get market value and tax data from assessment
             if assessment_info:
                 market_info = assessment_info.get('market', {})
                 if market_info:
                     estimated_value = market_info.get('mktTtlValue')
 
+                # Get assessed value for tax assessment
+                assessed_info = assessment_info.get('assessed', {})
+                if assessed_info:
+                    tax_assessment = assessed_info.get('assdTtlValue')
+
+                # Get tax information
+                tax_info = assessment_info.get('tax', {})
+                if tax_info:
+                    annual_taxes = tax_info.get('taxAmt')
+
             # Convert to Decimal
             if current_price:
                 current_price = Decimal(str(current_price))
+                logger.info(
+                    f"Converted current_price to Decimal: {current_price}")
             if estimated_value:
                 estimated_value = Decimal(str(estimated_value))
+            if tax_assessment:
+                tax_assessment = Decimal(str(tax_assessment))
+            if annual_taxes:
+                annual_taxes = Decimal(str(annual_taxes))
 
             # Estimate rent based on market data (1% rule + location adjustments)
             estimated_rent = None
@@ -291,17 +333,47 @@ class PropertyDataSyncer:
                     'bedrooms': int(bedrooms) if bedrooms else None,
                     'bathrooms': Decimal(str(bathrooms)) if bathrooms else None,
                     'square_feet': int(square_feet) if square_feet else None,
+                    'lot_size': lot_size,
                     'year_built': int(year_built) if year_built else None,
                     'current_price': current_price,
                     'estimated_value': estimated_value,
+                    'tax_assessment': tax_assessment,
+                    'annual_taxes': annual_taxes,
                     'estimated_rent': estimated_rent,
+                    'attom_id': attom_id,
                     'days_on_market': None,  # Not available in ATTOM response
                     'last_api_sync': timezone.now()
                 }
             )
 
+            # If property already exists, update key fields
+            if not created:
+                property_obj.zip_code = zip_code or property_obj.zip_code
+                property_obj.latitude = latitude or property_obj.latitude
+                property_obj.longitude = longitude or property_obj.longitude
+                property_obj.property_type = property_type or property_obj.property_type
+                property_obj.bedrooms = int(
+                    bedrooms) if bedrooms else property_obj.bedrooms
+                property_obj.bathrooms = Decimal(
+                    str(bathrooms)) if bathrooms else property_obj.bathrooms
+                property_obj.square_feet = int(
+                    square_feet) if square_feet else property_obj.square_feet
+                property_obj.lot_size = lot_size or property_obj.lot_size
+                property_obj.year_built = int(
+                    year_built) if year_built else property_obj.year_built
+                property_obj.current_price = current_price or property_obj.current_price
+                property_obj.estimated_value = estimated_value or property_obj.estimated_value
+                property_obj.tax_assessment = tax_assessment or property_obj.tax_assessment
+                property_obj.annual_taxes = annual_taxes or property_obj.annual_taxes
+                property_obj.estimated_rent = estimated_rent or property_obj.estimated_rent
+                property_obj.attom_id = attom_id or property_obj.attom_id
+                property_obj.last_api_sync = timezone.now()
+                property_obj.save()
+
             logger.info(
-                f"Created/updated property from ATTOM: {property_obj.address}")
+                f"{'Created' if created else 'Updated'} property from ATTOM: {property_obj.address}")
+            logger.info(
+                f"Property details - Price: {current_price}, Bedrooms: {bedrooms}, Bathrooms: {bathrooms}, Sqft: {square_feet}")
 
             # Always calculate investment metrics for new/updated properties
             self.calculate_investment_metrics(property_obj)

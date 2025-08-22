@@ -70,18 +70,68 @@ def logout(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def investment_opportunities(request):
-    """Get investment opportunities from ATTOM API ONLY - NO FALLBACK DATA"""
-    # For now, return empty results since ATTOM API requires specific addresses
-    # City-wide searches are not supported by ATTOM API
+    """Get investment opportunities from synced ATTOM data"""
     city = request.GET.get('city', '')
     state = request.GET.get('state', '')
+    limit = int(request.GET.get('limit', 50))
+
+    # Build query for synced properties only
+    query = Q(last_api_sync__isnull=False)
+
+    if city:
+        query &= Q(city__icontains=city)
+    if state:
+        query &= Q(state__icontains=state)
+
+    # Get properties with investment metrics, ordered by investment score
+    properties = Property.objects.filter(query).select_related(
+        'metrics').order_by('-metrics__investment_score')[:limit]
+
+    results = []
+    for prop in properties:
+        property_data = {
+            'id': prop.id,
+            'address': prop.address,
+            'city': prop.city,
+            'state': prop.state,
+            'zip_code': prop.zip_code,
+            'property_type': prop.property_type,
+            'bedrooms': prop.bedrooms,
+            'bathrooms': float(prop.bathrooms) if prop.bathrooms else None,
+            'square_feet': prop.square_feet,
+            'lot_size': float(prop.lot_size) if prop.lot_size else None,
+            'year_built': prop.year_built,
+            'current_price': float(prop.current_price) if prop.current_price else None,
+            'estimated_value': float(prop.estimated_value) if prop.estimated_value else None,
+            'tax_assessment': float(prop.tax_assessment) if prop.tax_assessment else None,
+            'annual_taxes': float(prop.annual_taxes) if prop.annual_taxes else None,
+            'estimated_rent': float(prop.estimated_rent) if prop.estimated_rent else None,
+            'latitude': float(prop.latitude) if prop.latitude else None,
+            'longitude': float(prop.longitude) if prop.longitude else None,
+            'last_api_sync': prop.last_api_sync,
+        }
+
+        # Add investment metrics if available
+        if hasattr(prop, 'metrics') and prop.metrics:
+            property_data['metrics'] = {
+                'investment_score': float(prop.metrics.investment_score) if prop.metrics.investment_score else None,
+                'cap_rate': float(prop.metrics.cap_rate) if prop.metrics.cap_rate else None,
+                'gross_rental_yield': float(prop.metrics.gross_rental_yield) if prop.metrics.gross_rental_yield else None,
+                'net_operating_income': float(prop.metrics.net_operating_income) if prop.metrics.net_operating_income else None,
+                'price_to_rent_ratio': float(prop.metrics.price_to_rent_ratio) if prop.metrics.price_to_rent_ratio else None,
+                'risk_score': float(prop.metrics.risk_score) if prop.metrics.risk_score else None,
+            }
+        else:
+            property_data['metrics'] = None
+
+        results.append(property_data)
 
     return Response({
-        'count': 0,
-        'results': [],
-        'source': 'attom-api-only',
-        'message': 'ATTOM API requires specific property addresses. City-wide searches not supported.',
-        'search_location': f"{city}, {state}" if city or state else "No location specified"
+        'count': len(results),
+        'results': results,
+        'source': 'database-synced-from-attom',
+        'search_location': f"{city}, {state}" if city or state else "All locations",
+        'message': f'Found {len(results)} synced properties from ATTOM API'
     })
 
 
@@ -276,3 +326,90 @@ def user_watchlist(request):
             return Response({'message': 'Property removed from watchlist'})
         except UserWatchlist.DoesNotExist:
             return Response({'error': 'Property not in watchlist'}, status=status.HTTP_404_NOT_FOUND)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def properties(request):
+    """Get all synced properties with optional filtering"""
+    city = request.GET.get('city', '')
+    state = request.GET.get('state', '')
+    min_price = request.GET.get('min_price')
+    max_price = request.GET.get('max_price')
+    property_type = request.GET.get('property_type', '')
+    limit = int(request.GET.get('limit', 100))
+
+    # Build query for synced properties only
+    query = Q(last_api_sync__isnull=False)
+
+    if city:
+        query &= Q(city__icontains=city)
+    if state:
+        query &= Q(state__icontains=state)
+    if property_type:
+        query &= Q(property_type__icontains=property_type)
+    if min_price:
+        query &= Q(current_price__gte=min_price)
+    if max_price:
+        query &= Q(current_price__lte=max_price)
+
+    # Get properties with investment metrics
+    properties = Property.objects.filter(query).select_related(
+        'metrics').order_by('-created_at')[:limit]
+
+    results = []
+    for prop in properties:
+        property_data = {
+            'id': prop.id,
+            'address': prop.address,
+            'city': prop.city,
+            'state': prop.state,
+            'zip_code': prop.zip_code,
+            'property_type': prop.property_type,
+            'bedrooms': prop.bedrooms,
+            'bathrooms': float(prop.bathrooms) if prop.bathrooms else None,
+            'square_feet': prop.square_feet,
+            'lot_size': float(prop.lot_size) if prop.lot_size else None,
+            'year_built': prop.year_built,
+            'current_price': float(prop.current_price) if prop.current_price else None,
+            'estimated_value': float(prop.estimated_value) if prop.estimated_value else None,
+            'tax_assessment': float(prop.tax_assessment) if prop.tax_assessment else None,
+            'annual_taxes': float(prop.annual_taxes) if prop.annual_taxes else None,
+            'estimated_rent': float(prop.estimated_rent) if prop.estimated_rent else None,
+            'latitude': float(prop.latitude) if prop.latitude else None,
+            'longitude': float(prop.longitude) if prop.longitude else None,
+            'attom_id': prop.attom_id,
+            'created_at': prop.created_at,
+            'last_api_sync': prop.last_api_sync,
+        }
+
+        # Add investment metrics if available
+        if hasattr(prop, 'metrics') and prop.metrics:
+            property_data['metrics'] = {
+                'investment_score': float(prop.metrics.investment_score) if prop.metrics.investment_score else None,
+                'cap_rate': float(prop.metrics.cap_rate) if prop.metrics.cap_rate else None,
+                'gross_rental_yield': float(prop.metrics.gross_rental_yield) if prop.metrics.gross_rental_yield else None,
+                'net_operating_income': float(prop.metrics.net_operating_income) if prop.metrics.net_operating_income else None,
+                'price_to_rent_ratio': float(prop.metrics.price_to_rent_ratio) if prop.metrics.price_to_rent_ratio else None,
+                'risk_score': float(prop.metrics.risk_score) if prop.metrics.risk_score else None,
+                'estimated_profit': float(prop.metrics.estimated_profit) if prop.metrics.estimated_profit else None,
+                'profit_margin': float(prop.metrics.profit_margin) if prop.metrics.profit_margin else None,
+            }
+        else:
+            property_data['metrics'] = None
+
+        results.append(property_data)
+
+    return Response({
+        'count': len(results),
+        'total_synced': Property.objects.filter(last_api_sync__isnull=False).count(),
+        'results': results,
+        'filters_applied': {
+            'city': city,
+            'state': state,
+            'property_type': property_type,
+            'min_price': min_price,
+            'max_price': max_price,
+            'limit': limit
+        }
+    })
