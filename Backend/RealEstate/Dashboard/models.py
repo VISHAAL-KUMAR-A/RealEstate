@@ -80,6 +80,8 @@ class InvestmentMetrics(models.Model):
         max_digits=5, decimal_places=2, null=True, blank=True)  # %
     cash_on_cash_return = models.DecimalField(
         max_digits=5, decimal_places=2, null=True, blank=True)  # %
+    roi = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True)  # % ROI
 
     # Profitability metrics
     estimated_profit = models.DecimalField(
@@ -128,6 +130,17 @@ class InvestmentMetrics(models.Model):
 
         # Price to Rent Ratio
         self.price_to_rent_ratio = self.property_ref.current_price / annual_rent
+
+        # ROI Calculation - Use AI valuation ROI if available, otherwise calculate basic ROI
+        ai_roi = self._get_ai_valuation_roi()
+        if ai_roi is not None:
+            self.roi = ai_roi
+        else:
+            # Calculate basic ROI: (Annual NOI / Purchase Price) * 100
+            # This gives annual return on investment
+            if self.net_operating_income and self.property_ref.current_price:
+                self.roi = (self.net_operating_income /
+                            self.property_ref.current_price) * 100
 
         # Estimated Profit - Try OpenAI prediction first, fallback to simple calculation
         ai_predicted_profit = self._get_ai_predicted_profit()
@@ -202,6 +215,34 @@ class InvestmentMetrics(models.Model):
             logger.warning(f"Could not get AI profit prediction: {e}")
             return None
 
+    def _get_ai_valuation_roi(self):
+        """Get the most recent AI-generated ROI from PropertyValuation records"""
+        try:
+            # Get the most recent successful AI valuation for this property
+            latest_valuation = self.property_ref.valuations.filter(
+                valuation_successful=True,
+                five_year_roi_percent__isnull=False
+            ).order_by('-created_at').first()
+
+            if latest_valuation and latest_valuation.five_year_roi_percent:
+                # Convert 5-year ROI to annual ROI estimate
+                # Simple approximation: divide by 5 for annual average
+                annual_roi = float(latest_valuation.five_year_roi_percent) / 5
+
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(
+                    f"Using AI ROI for {self.property_ref.address}: {annual_roi}% (from 5-year: {latest_valuation.five_year_roi_percent}%)")
+
+                return Decimal(str(annual_roi))
+
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Could not get AI valuation ROI: {e}")
+
+        return None
+
     def __str__(self):
         return f"Metrics for {self.property_ref.address}"
 
@@ -247,3 +288,69 @@ class MarketData(models.Model):
 
     def __str__(self):
         return f"Market data for {self.city}, {self.state}"
+
+
+class PropertyValuation(models.Model):
+    """AI-generated property valuations with detailed analysis"""
+    property_ref = models.ForeignKey(
+        Property, on_delete=models.CASCADE, related_name='valuations')
+    requested_by = models.ForeignKey(
+        User, on_delete=models.CASCADE, null=True, blank=True)
+
+    # Core valuation results
+    fair_market_value = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True)
+    annual_noi = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True)
+    five_year_roi_percent = models.DecimalField(
+        max_digits=6, decimal_places=2, null=True, blank=True)
+
+    # Detailed assumptions and projections
+    monthly_gross_rent = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True)
+    annual_operating_expenses = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True)
+    annual_appreciation_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True)
+
+    # AI analysis text
+    investment_recommendation = models.CharField(
+        max_length=500, blank=True)  # Strong Buy/Buy/Hold/Pass
+    analysis_summary = models.TextField(blank=True)
+    key_assumptions = models.TextField(blank=True)
+    raw_ai_response = models.TextField(blank=True)  # Full OpenAI response
+
+    # Valuation metadata
+    valuation_successful = models.BooleanField(default=False)
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    # ATTOM API endpoints used for this valuation
+    attom_endpoints_used = models.JSONField(default=list, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['property_ref', '-created_at']),
+            models.Index(fields=['valuation_successful']),
+            models.Index(fields=['fair_market_value']),
+        ]
+
+    @property
+    def gross_rental_yield(self):
+        """Calculate gross rental yield based on AI estimates"""
+        if self.monthly_gross_rent and self.fair_market_value:
+            annual_rent = self.monthly_gross_rent * 12
+            return (annual_rent / self.fair_market_value) * 100
+        return None
+
+    @property
+    def cap_rate(self):
+        """Calculate cap rate based on AI estimates"""
+        if self.annual_noi and self.fair_market_value:
+            return (self.annual_noi / self.fair_market_value) * 100
+        return None
+
+    def __str__(self):
+        status = "✓" if self.valuation_successful else "✗"
+        return f"{status} AI Valuation for {self.property_ref.address} - {self.created_at.strftime('%Y-%m-%d')}"

@@ -18,4 +18,10 @@ urlpatterns = [
     path('sync-property-data/', views.sync_property_data,
          name='sync_property_data'),
     path('watchlist/', views.user_watchlist, name='user_watchlist'),
+
+    # AI Property Valuation endpoints
+    path('property-valuation/', views.property_valuation,
+         name='property_valuation'),
+    path('properties/<int:property_id>/valuations/',
+         views.property_valuations, name='property_valuations'),
 ]

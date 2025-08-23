@@ -647,3 +647,106 @@ def best_deals(request):
         'applied_filters': dict(request.GET.items()),
         'source': 'advanced-filtered-attom-data'
     })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def property_valuation(request):
+    """
+    Generate AI-powered property valuation using OpenAI and ATTOM Data
+
+    Expected payload:
+    {
+        "property_id": 123
+    }
+    """
+    property_id = request.data.get('property_id')
+
+    if not property_id:
+        return Response({
+            'error': 'property_id is required'
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        # Get the property object
+        property_obj = Property.objects.get(id=property_id)
+
+    except Property.DoesNotExist:
+        return Response({
+            'error': 'Property not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        # Use the PropertyValuationService to generate valuation
+        from .services import PropertyValuationService
+        valuation_service = PropertyValuationService()
+
+        result = valuation_service.get_property_valuation(
+            property_obj, request.user)
+
+        if result['success']:
+            return Response(result, status=status.HTTP_200_OK)
+        else:
+            return Response(result, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    except Exception as e:
+        return Response({
+            'error': 'Valuation service error',
+            'details': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def property_valuations(request, property_id):
+    """
+    Get all valuations for a specific property
+    """
+    try:
+        property_obj = Property.objects.get(id=property_id)
+
+        # Import here to avoid circular imports
+        from .models import PropertyValuation
+
+        # Get all valuations for this property, most recent first
+        valuations = PropertyValuation.objects.filter(
+            property_ref=property_obj
+        ).order_by('-created_at')
+
+        valuation_data = []
+        for valuation in valuations:
+            data = {
+                'id': valuation.id,
+                'fair_market_value': valuation.fair_market_value,
+                'annual_noi': valuation.annual_noi,
+                'five_year_roi_percent': valuation.five_year_roi_percent,
+                'monthly_gross_rent': valuation.monthly_gross_rent,
+                'annual_operating_expenses': valuation.annual_operating_expenses,
+                'annual_appreciation_rate': valuation.annual_appreciation_rate,
+                'investment_recommendation': valuation.investment_recommendation,
+                'analysis_summary': valuation.analysis_summary,
+                'key_assumptions': valuation.key_assumptions,
+                'valuation_successful': valuation.valuation_successful,
+                'error_message': valuation.error_message if not valuation.valuation_successful else None,
+                'created_at': valuation.created_at.isoformat(),
+                'requested_by': valuation.requested_by.username if valuation.requested_by else None,
+                'attom_endpoints_used': valuation.attom_endpoints_used,
+                'gross_rental_yield': valuation.gross_rental_yield,
+                'cap_rate': valuation.cap_rate,
+            }
+            valuation_data.append(data)
+
+        return Response({
+            'property': {
+                'id': property_obj.id,
+                'address': property_obj.address,
+                'city': property_obj.city,
+                'state': property_obj.state
+            },
+            'valuations': valuation_data
+        })
+
+    except Property.DoesNotExist:
+        return Response({
+            'error': 'Property not found'
+        }, status=status.HTTP_404_NOT_FOUND)

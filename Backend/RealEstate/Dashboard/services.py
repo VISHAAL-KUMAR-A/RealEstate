@@ -5,7 +5,7 @@ import json
 from django.conf import settings
 from django.utils import timezone
 from decimal import Decimal
-from .models import Property, InvestmentMetrics
+from .models import Property, InvestmentMetrics, PropertyValuation
 from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -581,3 +581,332 @@ class PropertyDataSyncer:
             all_properties.extend(properties)
 
         return all_properties
+
+
+class PropertyValuationService:
+    """AI-powered Property Valuation Service using OpenAI and ATTOM Data"""
+
+    def __init__(self):
+        self.attom_service = AttomAPIService()
+        self.openai_api_key = settings.OPENAI_API_KEY
+        if not self.openai_api_key:
+            raise ValueError("OPENAI_API_KEY not found in settings")
+
+    def get_property_valuation(self, property_obj: Property, user=None) -> Dict:
+        """
+        Get comprehensive property valuation including:
+        - Fair Market Value estimation
+        - Net Operating Income (NOI)
+        - 5-Year ROI projection
+        Save results to database for persistence and tracking.
+        """
+        # Create valuation record
+        valuation_record = PropertyValuation.objects.create(
+            property_ref=property_obj,
+            requested_by=user,
+            valuation_successful=False
+        )
+
+        try:
+            # Fetch additional property data from ATTOM if needed
+            property_metrics = self._fetch_property_metrics(property_obj)
+            endpoints_used = list(property_metrics.keys()
+                                  ) if property_metrics else []
+
+            # Create comprehensive valuation prompt
+            prompt = self._create_valuation_prompt(
+                property_obj, property_metrics)
+
+            # Get valuation from OpenAI
+            client = openai.OpenAI(api_key=self.openai_api_key)
+
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": """You are a senior real estate investment analyst with 15+ years of experience in property valuation and investment analysis. You have deep knowledge of:
+                        - Comparable market analysis (CMA)
+                        - Income capitalization approach
+                        - Real estate investment metrics
+                        - Market trends and appreciation patterns
+                        - Operating expense ratios by property type and location
+                        
+                        Provide realistic, conservative estimates based on current market conditions."""
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                max_tokens=800,
+                temperature=0.2  # Low temperature for consistent, conservative estimates
+            )
+
+            # Parse the AI response
+            valuation_text = response.choices[0].message.content.strip()
+
+            # Extract structured data from response
+            valuation_data = self._parse_valuation_response(
+                valuation_text, property_obj)
+
+            # Save successful results to database
+            valuation_record.fair_market_value = valuation_data.get(
+                'fair_market_value')
+            valuation_record.annual_noi = valuation_data.get('annual_noi')
+            valuation_record.five_year_roi_percent = valuation_data.get(
+                'five_year_roi_percent')
+            valuation_record.monthly_gross_rent = valuation_data.get(
+                'monthly_gross_rent')
+            valuation_record.annual_operating_expenses = valuation_data.get(
+                'annual_operating_expenses')
+            valuation_record.annual_appreciation_rate = valuation_data.get(
+                'annual_appreciation_rate')
+            valuation_record.investment_recommendation = valuation_data.get(
+                'investment_recommendation', '')[:500]  # Truncate to fit field
+            valuation_record.analysis_summary = valuation_data.get(
+                'analysis_summary', '')
+            valuation_record.key_assumptions = valuation_data.get(
+                'key_assumptions', '')
+            valuation_record.raw_ai_response = valuation_text
+            valuation_record.attom_endpoints_used = endpoints_used
+            valuation_record.valuation_successful = True
+            valuation_record.save()
+
+            # Recalculate investment metrics to use the new AI-generated ROI
+            try:
+                metrics, created = InvestmentMetrics.objects.get_or_create(
+                    property_ref=property_obj)
+                metrics.calculate_metrics()
+                logger.info(
+                    f"Updated investment metrics with AI ROI for {property_obj.address}")
+            except Exception as e:
+                logger.warning(
+                    f"Failed to update metrics after AI valuation: {e}")
+
+            logger.info(
+                f"Generated valuation for {property_obj.address}: FMV=${valuation_data.get('fair_market_value')}")
+
+            return {
+                'success': True,
+                'property_id': property_obj.id,
+                'valuation_id': valuation_record.id,
+                'address': property_obj.address,
+                'valuation_data': valuation_data,
+                'raw_analysis': valuation_text,
+                'generated_at': valuation_record.created_at.isoformat(),
+                'attom_endpoints_used': endpoints_used
+            }
+
+        except Exception as e:
+            # Save error details to database
+            valuation_record.error_message = str(e)
+            valuation_record.save()
+
+            logger.error(
+                f"Property valuation failed for {property_obj.address}: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'property_id': property_obj.id,
+                'valuation_id': valuation_record.id,
+                'address': property_obj.address
+            }
+
+    def _fetch_property_metrics(self, property_obj: Property) -> Dict:
+        """Fetch additional property metrics from ATTOM API if needed"""
+        metrics = {}
+
+        try:
+            if property_obj.attom_id or (property_obj.address and property_obj.city and property_obj.state):
+                # Use address to get fresh data from ATTOM
+                address_params = {
+                    'address1': property_obj.address,
+                    'address2': f"{property_obj.city}, {property_obj.state}"
+                }
+
+                # Try to get rent comparables and recent sales
+                endpoints_to_try = [
+                    '/propertyapi/v1.0.0/property/expandedprofile',
+                    '/propertyapi/v1.0.0/avm/detail',  # Automated Valuation Model
+                    '/propertyapi/v1.0.0/sale/snapshot'  # Recent sales data
+                ]
+
+                for endpoint in endpoints_to_try:
+                    try:
+                        data = self.attom_service._make_request(
+                            endpoint, address_params)
+                        if data:
+                            metrics[endpoint.split('/')[-1]] = data
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch from {endpoint}: {e}")
+                        continue
+
+        except Exception as e:
+            logger.warning(
+                f"Could not fetch additional metrics for {property_obj.address}: {e}")
+
+        return metrics
+
+    def _create_valuation_prompt(self, property_obj: Property, additional_metrics: Dict) -> str:
+        """Create comprehensive valuation prompt for OpenAI"""
+
+        # Format property details
+        price_str = f"${property_obj.current_price:,.0f}" if property_obj.current_price else 'Not Available'
+        estimated_value_str = f"${property_obj.estimated_value:,.0f}" if property_obj.estimated_value else 'Not Available'
+        tax_assessment_str = f"${property_obj.tax_assessment:,.0f}" if property_obj.tax_assessment else 'Not Available'
+        annual_taxes_str = f"${property_obj.annual_taxes:,.0f}" if property_obj.annual_taxes else 'Not Available'
+        estimated_rent_str = f"${property_obj.estimated_rent:,.0f}/month" if property_obj.estimated_rent else 'Not Available'
+
+        prompt = f"""
+PROPERTY VALUATION REQUEST
+
+Please provide a comprehensive investment analysis for the following property:
+
+=== PROPERTY DETAILS ===
+Address: {property_obj.address}, {property_obj.city}, {property_obj.state} {property_obj.zip_code or ''}
+Property Type: {property_obj.property_type}
+Year Built: {property_obj.year_built or 'Unknown'}
+Bedrooms: {property_obj.bedrooms or 'N/A'}
+Bathrooms: {property_obj.bathrooms or 'N/A'}
+Square Footage: {property_obj.square_feet or 'N/A'} sqft
+Lot Size: {property_obj.lot_size or 'N/A'} acres
+
+=== FINANCIAL DATA ===
+Current Listed/Sale Price: {price_str}
+Market Value Estimate: {estimated_value_str}
+Tax Assessment Value: {tax_assessment_str}
+Annual Property Taxes: {annual_taxes_str}
+Estimated Monthly Rent: {estimated_rent_str}
+
+=== ANALYSIS REQUEST ===
+Based on current market conditions in {property_obj.city}, {property_obj.state} and the above property details, please provide:
+
+1. **FAIR MARKET VALUE**: Your estimate of the current fair market value
+2. **NET OPERATING INCOME (NOI)**: Annual NOI calculation (gross rent - operating expenses)
+3. **5-YEAR ROI PROJECTION**: Expected total return on investment over 5 years
+
+Consider these factors in your analysis:
+- Local market trends in {property_obj.city}, {property_obj.state}
+- Property condition based on age (built {property_obj.year_built or 'unknown'})
+- Rental income potential vs. purchase price
+- Operating expenses (maintenance, insurance, vacancy, property management)
+- Property tax implications
+- Market appreciation trends for similar properties
+- Economic factors affecting the {property_obj.state} real estate market
+
+=== RESPONSE FORMAT ===
+Please structure your response as follows:
+
+**FAIR MARKET VALUE:** $XXX,XXX
+**ESTIMATED NOI:** $XX,XXX annually
+**5-YEAR ROI PROJECTION:** XX.X%
+
+**ANALYSIS SUMMARY:**
+[Provide 3-4 sentences explaining key factors influencing these estimates]
+
+**KEY ASSUMPTIONS:**
+- Monthly gross rent: $X,XXX
+- Annual operating expenses: $X,XXX (XX% of gross rent)
+- Annual appreciation rate: X.X%
+- Other relevant assumptions
+
+**INVESTMENT RECOMMENDATION:**
+[Brief assessment: Strong Buy/Buy/Hold/Pass with reasoning]
+"""
+
+        return prompt
+
+    def _parse_valuation_response(self, response_text: str, property_obj: Property) -> Dict:
+        """Parse OpenAI valuation response into structured data"""
+        import re
+
+        valuation_data = {
+            'fair_market_value': None,
+            'annual_noi': None,
+            'five_year_roi_percent': None,
+            'monthly_gross_rent': None,
+            'annual_operating_expenses': None,
+            'annual_appreciation_rate': None,
+            'investment_recommendation': None,
+            'analysis_summary': '',
+            'key_assumptions': ''
+        }
+
+        try:
+            # Extract Fair Market Value
+            fmv_pattern = r'FAIR MARKET VALUE.*?\$([0-9,]+)'
+            fmv_match = re.search(fmv_pattern, response_text, re.IGNORECASE)
+            if fmv_match:
+                valuation_data['fair_market_value'] = float(
+                    fmv_match.group(1).replace(',', ''))
+
+            # Extract NOI
+            noi_pattern = r'(?:ESTIMATED NOI|NOI).*?\$([0-9,]+)'
+            noi_match = re.search(noi_pattern, response_text, re.IGNORECASE)
+            if noi_match:
+                valuation_data['annual_noi'] = float(
+                    noi_match.group(1).replace(',', ''))
+
+            # Extract 5-Year ROI
+            roi_pattern = r'5-YEAR ROI.*?([0-9.]+)%'
+            roi_match = re.search(roi_pattern, response_text, re.IGNORECASE)
+            if roi_match:
+                valuation_data['five_year_roi_percent'] = float(
+                    roi_match.group(1))
+
+            # Extract monthly rent assumption
+            rent_pattern = r'Monthly gross rent.*?\$([0-9,]+)'
+            rent_match = re.search(rent_pattern, response_text, re.IGNORECASE)
+            if rent_match:
+                valuation_data['monthly_gross_rent'] = float(
+                    rent_match.group(1).replace(',', ''))
+
+            # Extract operating expenses
+            opex_pattern = r'operating expenses.*?\$([0-9,]+)'
+            opex_match = re.search(opex_pattern, response_text, re.IGNORECASE)
+            if opex_match:
+                valuation_data['annual_operating_expenses'] = float(
+                    opex_match.group(1).replace(',', ''))
+
+            # Extract appreciation rate
+            appreciation_pattern = r'appreciation rate.*?([0-9.]+)%'
+            appreciation_match = re.search(
+                appreciation_pattern, response_text, re.IGNORECASE)
+            if appreciation_match:
+                valuation_data['annual_appreciation_rate'] = float(
+                    appreciation_match.group(1))
+
+            # Extract recommendation
+            recommendation_patterns = [
+                r'INVESTMENT RECOMMENDATION.*?:(.*?)(?:\n|$)',
+                r'RECOMMENDATION.*?:(.*?)(?:\n|$)'
+            ]
+            for pattern in recommendation_patterns:
+                rec_match = re.search(
+                    pattern, response_text, re.IGNORECASE | re.DOTALL)
+                if rec_match:
+                    valuation_data['investment_recommendation'] = rec_match.group(
+                        1).strip()
+                    break
+
+            # Extract analysis summary
+            summary_pattern = r'ANALYSIS SUMMARY.*?:(.*?)(?=\*\*|$)'
+            summary_match = re.search(
+                summary_pattern, response_text, re.IGNORECASE | re.DOTALL)
+            if summary_match:
+                valuation_data['analysis_summary'] = summary_match.group(
+                    1).strip()
+
+            # Extract key assumptions
+            assumptions_pattern = r'KEY ASSUMPTIONS.*?:(.*?)(?=\*\*|$)'
+            assumptions_match = re.search(
+                assumptions_pattern, response_text, re.IGNORECASE | re.DOTALL)
+            if assumptions_match:
+                valuation_data['key_assumptions'] = assumptions_match.group(
+                    1).strip()
+
+        except Exception as e:
+            logger.error(f"Error parsing valuation response: {e}")
+
+        return valuation_data

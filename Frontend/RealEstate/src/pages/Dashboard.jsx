@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { apiFetch, clearAuthTokens, logoutApi } from '../api/client.js'
 import PropertyMap from '../components/PropertyMap.jsx'
+import PropertyValuation from '../components/PropertyValuation.jsx'
 
 function StatCard({ label, value, subtitle, loading }) {
   return (
@@ -16,7 +17,7 @@ function StatCard({ label, value, subtitle, loading }) {
   )
 }
 
-function PropertyCard({ property, onAddToWatchlist }) {
+function PropertyCard({ property, onAddToWatchlist, onOpenValuation }) {
   const { metrics } = property
   
   return (
@@ -26,12 +27,21 @@ function PropertyCard({ property, onAddToWatchlist }) {
           <h3 className="text-slate-100 font-semibold">{property.address}</h3>
           <p className="text-slate-400 text-sm">{property.city}, {property.state} {property.zip_code}</p>
         </div>
-        <button 
-          onClick={() => onAddToWatchlist(property.id)}
-          className="text-slate-400 hover:text-slate-200 text-sm"
-        >
-          ⭐
-        </button>
+        <div className="flex gap-2">
+          <button 
+            onClick={() => onOpenValuation && onOpenValuation(property)}
+            className="text-blue-400 hover:text-blue-300 text-sm bg-blue-900/20 hover:bg-blue-900/30 px-2 py-1 rounded"
+            title="AI Valuation"
+          >
+            🤖
+          </button>
+          <button 
+            onClick={() => onAddToWatchlist(property.id)}
+            className="text-slate-400 hover:text-slate-200 text-sm"
+          >
+            ⭐
+          </button>
+        </div>
       </div>
       
       <div className="grid grid-cols-2 gap-3 mb-3">
@@ -49,7 +59,7 @@ function PropertyCard({ property, onAddToWatchlist }) {
         </div>
       </div>
       
-      <div className="grid grid-cols-4 gap-2 mb-3">
+      <div className="grid grid-cols-3 gap-2 mb-3" style={metrics?.roi ? {gridTemplateColumns: 'repeat(4, 1fr)'} : {}}>
         <div className="text-center">
           <div className="text-xs text-slate-400">Score</div>
           <div className="text-sm font-bold text-green-400">
@@ -62,12 +72,14 @@ function PropertyCard({ property, onAddToWatchlist }) {
             {metrics?.cap_rate ? `${metrics.cap_rate.toFixed(1)}%` : 'N/A'}
           </div>
         </div>
-        <div className="text-center">
-          <div className="text-xs text-slate-400">ROI</div>
-          <div className="text-sm font-bold text-purple-400">
-            {metrics?.roi ? `${metrics.roi.toFixed(1)}%` : 'N/A'}
+        {metrics?.roi && (
+          <div className="text-center">
+            <div className="text-xs text-slate-400">ROI</div>
+            <div className="text-sm font-bold text-purple-400">
+              {metrics.roi.toFixed(1)}%
+            </div>
           </div>
-        </div>
+        )}
         <div className="text-center">
           <div className="text-xs text-slate-400">Yield</div>
           <div className="text-sm font-bold text-yellow-400">
@@ -143,6 +155,10 @@ export default function Dashboard({ profile, onLogout }) {
   const [address2, setAddress2] = useState('')
   const [showAddPropertyForm, setShowAddPropertyForm] = useState(false)
   const [activeTab, setActiveTab] = useState('dashboard') // 'dashboard' or 'map'
+  
+  // Valuation modal state
+  const [showValuationModal, setShowValuationModal] = useState(false)
+  const [selectedPropertyForValuation, setSelectedPropertyForValuation] = useState(null)
 
   const fetchDashboardStats = useCallback(async () => {
     try {
@@ -270,6 +286,16 @@ export default function Dashboard({ profile, onLogout }) {
     await logoutApi()
     clearAuthTokens()
     onLogout()
+  }
+
+  const handleOpenValuation = (property) => {
+    setSelectedPropertyForValuation(property)
+    setShowValuationModal(true)
+  }
+
+  const handleCloseValuation = () => {
+    setShowValuationModal(false)
+    setSelectedPropertyForValuation(null)
   }
 
   return (
@@ -678,7 +704,7 @@ export default function Dashboard({ profile, onLogout }) {
                       </div>
                     </div>
                     
-                    <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                    <div className={`grid grid-cols-2 gap-4 ${property.metrics?.roi ? 'md:grid-cols-5' : 'md:grid-cols-4'}`}>
                       <div className="text-center">
                         <div className="text-lg font-semibold text-slate-100">
                           ${property.current_price?.toLocaleString() || 'N/A'}
@@ -691,12 +717,14 @@ export default function Dashboard({ profile, onLogout }) {
                         </div>
                         <div className="text-xs text-slate-400">Cap Rate</div>
                       </div>
-                      <div className="text-center">
-                        <div className="text-lg font-semibold text-purple-400">
-                          {property.metrics?.roi?.toFixed(1) || 'N/A'}%
+                      {property.metrics?.roi && (
+                        <div className="text-center">
+                          <div className="text-lg font-semibold text-purple-400">
+                            {property.metrics.roi.toFixed(1)}%
+                          </div>
+                          <div className="text-xs text-slate-400">ROI</div>
                         </div>
-                        <div className="text-xs text-slate-400">ROI</div>
-                      </div>
+                      )}
                       <div className="text-center">
                         <div className="text-lg font-semibold text-blue-400">
                           ${property.estimated_rent?.toLocaleString() || 'N/A'}/mo
@@ -841,6 +869,7 @@ export default function Dashboard({ profile, onLogout }) {
                   key={property.id} 
                   property={property} 
                   onAddToWatchlist={handleAddToWatchlist}
+                  onOpenValuation={handleOpenValuation}
                 />
               ))}
             </div>
@@ -974,6 +1003,36 @@ export default function Dashboard({ profile, onLogout }) {
           </>
         )}
       </div>
+      
+      {/* Valuation Modal */}
+      {showValuationModal && selectedPropertyForValuation && (
+        <div className="fixed inset-0 z-50 overflow-auto bg-black bg-opacity-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 rounded-xl border border-slate-700 w-full max-w-4xl max-h-[90vh] overflow-auto">
+            <div className="sticky top-0 bg-slate-900 border-b border-slate-700 px-6 py-4 flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-slate-100">
+                  AI Property Valuation
+                </h2>
+                <p className="text-slate-400 text-sm">
+                  {selectedPropertyForValuation.address}, {selectedPropertyForValuation.city}, {selectedPropertyForValuation.state}
+                </p>
+              </div>
+              <button
+                onClick={handleCloseValuation}
+                className="text-slate-400 hover:text-slate-200 text-2xl"
+              >
+                ×
+              </button>
+            </div>
+            <div className="p-6">
+              <PropertyValuation 
+                propertyId={selectedPropertyForValuation.id}
+                className="text-slate-100"
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
