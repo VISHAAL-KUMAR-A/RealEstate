@@ -8,7 +8,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import Property, InvestmentMetrics, UserWatchlist, MarketData
+from .models import Property, InvestmentMetrics, UserWatchlist, MarketData, Deal, DealStage
 from .services import PropertyDataSyncer
 from .filters import PropertyFilter
 import logging
@@ -750,3 +750,330 @@ def property_valuations(request, property_id):
         return Response({
             'error': 'Property not found'
         }, status=status.HTTP_404_NOT_FOUND)
+
+
+# Deal Pipeline Views
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def deals(request):
+    """Get all deals or create a new deal"""
+    if request.method == 'GET':
+        # Get all deals for the kanban board
+        deals_queryset = Deal.objects.select_related(
+            'stage', 'property_ref', 'assigned_to', 'created_by'
+        ).filter(created_by=request.user)
+
+        # Organize deals by stage
+        deals_by_stage = {}
+        stages = DealStage.objects.all()
+
+        for stage in stages:
+            deals_by_stage[stage.name] = {
+                'stage_info': {
+                    'id': stage.id,
+                    'name': stage.name,
+                    'display_name': stage.display_name,
+                    'color': stage.color,
+                    'order': stage.order
+                },
+                'deals': []
+            }
+
+        for deal in deals_queryset:
+            deal_data = {
+                'id': deal.id,
+                'title': deal.title,
+                'description': deal.description,
+                'priority': deal.priority,
+                'status': deal.status,
+                'expected_purchase_price': float(deal.expected_purchase_price) if deal.expected_purchase_price else None,
+                'actual_purchase_price': float(deal.actual_purchase_price) if deal.actual_purchase_price else None,
+                'estimated_profit': float(deal.estimated_profit) if deal.estimated_profit else None,
+                'target_close_date': deal.target_close_date,
+                'actual_close_date': deal.actual_close_date,
+                'position': deal.position,
+                'notes': deal.notes,
+                'created_at': deal.created_at,
+                'updated_at': deal.updated_at,
+                'days_in_stage': deal.days_in_stage,
+                'assigned_to': deal.assigned_to.username if deal.assigned_to else None,
+                'created_by': deal.created_by.username,
+                'property': {
+                    'id': deal.property_ref.id,
+                    'address': deal.property_ref.address,
+                    'city': deal.property_ref.city,
+                    'state': deal.property_ref.state,
+                    'current_price': float(deal.property_ref.current_price) if deal.property_ref.current_price else None,
+                } if deal.property_ref else None
+            }
+
+            deals_by_stage[deal.stage.name]['deals'].append(deal_data)
+
+        return Response(deals_by_stage)
+
+    elif request.method == 'POST':
+        # Create a new deal
+        title = request.data.get('title')
+        stage_name = request.data.get('stage', 'acquisition')
+
+        if not title:
+            return Response({
+                'error': 'Title is required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            stage = DealStage.objects.get(name=stage_name)
+        except DealStage.DoesNotExist:
+            return Response({
+                'error': f'Invalid stage: {stage_name}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Get highest position in this stage for new deal
+        max_position = Deal.objects.filter(stage=stage).aggregate(
+            models.Max('position'))['position__max']
+        position = (max_position or 0) + 1
+
+        # Optional property linking
+        property_id = request.data.get('property_id')
+        property_obj = None
+        if property_id:
+            try:
+                property_obj = Property.objects.get(id=property_id)
+            except Property.DoesNotExist:
+                return Response({
+                    'error': 'Property not found'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+        deal = Deal.objects.create(
+            title=title,
+            description=request.data.get('description', ''),
+            property_ref=property_obj,
+            stage=stage,
+            priority=request.data.get('priority', 'medium'),
+            expected_purchase_price=request.data.get(
+                'expected_purchase_price'),
+            estimated_profit=request.data.get('estimated_profit'),
+            target_close_date=request.data.get('target_close_date'),
+            notes=request.data.get('notes', ''),
+            created_by=request.user,
+            position=position
+        )
+
+        return Response({
+            'id': deal.id,
+            'title': deal.title,
+            'stage': deal.stage.name,
+            'message': 'Deal created successfully'
+        }, status=status.HTTP_201_CREATED)
+
+
+@api_view(['GET', 'PUT', 'DELETE'])
+@permission_classes([IsAuthenticated])
+def deal_detail(request, deal_id):
+    """Get, update, or delete a specific deal"""
+    try:
+        deal = Deal.objects.select_related(
+            'stage', 'property_ref', 'assigned_to', 'created_by'
+        ).get(id=deal_id, created_by=request.user)
+    except Deal.DoesNotExist:
+        return Response({
+            'error': 'Deal not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == 'GET':
+        deal_data = {
+            'id': deal.id,
+            'title': deal.title,
+            'description': deal.description,
+            'stage': {
+                'name': deal.stage.name,
+                'display_name': deal.stage.display_name,
+                'color': deal.stage.color
+            },
+            'priority': deal.priority,
+            'status': deal.status,
+            'expected_purchase_price': float(deal.expected_purchase_price) if deal.expected_purchase_price else None,
+            'actual_purchase_price': float(deal.actual_purchase_price) if deal.actual_purchase_price else None,
+            'estimated_profit': float(deal.estimated_profit) if deal.estimated_profit else None,
+            'target_close_date': deal.target_close_date,
+            'actual_close_date': deal.actual_close_date,
+            'position': deal.position,
+            'notes': deal.notes,
+            'created_at': deal.created_at,
+            'updated_at': deal.updated_at,
+            'days_in_stage': deal.days_in_stage,
+            'assigned_to': {
+                'id': deal.assigned_to.id,
+                'username': deal.assigned_to.username,
+            } if deal.assigned_to else None,
+            'created_by': {
+                'id': deal.created_by.id,
+                'username': deal.created_by.username,
+            },
+            'property': {
+                'id': deal.property_ref.id,
+                'address': deal.property_ref.address,
+                'city': deal.property_ref.city,
+                'state': deal.property_ref.state,
+                'current_price': float(deal.property_ref.current_price) if deal.property_ref.current_price else None,
+                'estimated_rent': float(deal.property_ref.estimated_rent) if deal.property_ref.estimated_rent else None,
+            } if deal.property_ref else None
+        }
+        return Response(deal_data)
+
+    elif request.method == 'PUT':
+        # Update deal
+        deal.title = request.data.get('title', deal.title)
+        deal.description = request.data.get('description', deal.description)
+        deal.priority = request.data.get('priority', deal.priority)
+        deal.status = request.data.get('status', deal.status)
+        deal.expected_purchase_price = request.data.get(
+            'expected_purchase_price', deal.expected_purchase_price)
+        deal.actual_purchase_price = request.data.get(
+            'actual_purchase_price', deal.actual_purchase_price)
+        deal.estimated_profit = request.data.get(
+            'estimated_profit', deal.estimated_profit)
+        deal.target_close_date = request.data.get(
+            'target_close_date', deal.target_close_date)
+        deal.actual_close_date = request.data.get(
+            'actual_close_date', deal.actual_close_date)
+        deal.notes = request.data.get('notes', deal.notes)
+
+        # Handle property assignment
+        property_id = request.data.get('property_id')
+        if property_id is not None:
+            if property_id:
+                try:
+                    deal.property_ref = Property.objects.get(id=property_id)
+                except Property.DoesNotExist:
+                    return Response({
+                        'error': 'Property not found'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                deal.property_ref = None
+
+        # Handle user assignment
+        assigned_to_id = request.data.get('assigned_to_id')
+        if assigned_to_id is not None:
+            if assigned_to_id:
+                try:
+                    deal.assigned_to = User.objects.get(id=assigned_to_id)
+                except User.DoesNotExist:
+                    return Response({
+                        'error': 'Assigned user not found'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                deal.assigned_to = None
+
+        deal.save()
+
+        return Response({
+            'id': deal.id,
+            'title': deal.title,
+            'message': 'Deal updated successfully'
+        })
+
+    elif request.method == 'DELETE':
+        deal.delete()
+        return Response({
+            'message': 'Deal deleted successfully'
+        })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def move_deal(request):
+    """Move a deal to a different stage and position"""
+    deal_id = request.data.get('deal_id')
+    target_stage_name = request.data.get('target_stage')
+    target_position = request.data.get('target_position', 0)
+
+    if not deal_id or not target_stage_name:
+        return Response({
+            'error': 'deal_id and target_stage are required'
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        deal = Deal.objects.get(id=deal_id, created_by=request.user)
+        target_stage = DealStage.objects.get(name=target_stage_name)
+    except Deal.DoesNotExist:
+        return Response({
+            'error': 'Deal not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except DealStage.DoesNotExist:
+        return Response({
+            'error': 'Invalid target stage'
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    # Use transaction to ensure data consistency
+    with transaction.atomic():
+        old_stage = deal.stage
+        old_position = deal.position
+
+        # If moving to a different stage, update positions in both stages
+        if old_stage != target_stage:
+            # Remove from old stage (shift positions down)
+            Deal.objects.filter(
+                stage=old_stage,
+                position__gt=old_position,
+                created_by=request.user
+            ).update(position=models.F('position') - 1)
+
+            # Make room in target stage (shift positions up)
+            Deal.objects.filter(
+                stage=target_stage,
+                position__gte=target_position,
+                created_by=request.user
+            ).update(position=models.F('position') + 1)
+
+            # Update the deal
+            deal.stage = target_stage
+            deal.position = target_position
+            deal.save()
+
+        # If moving within the same stage
+        elif old_position != target_position:
+            if old_position < target_position:
+                # Moving down: shift items up
+                Deal.objects.filter(
+                    stage=target_stage,
+                    position__gt=old_position,
+                    position__lte=target_position,
+                    created_by=request.user
+                ).exclude(id=deal_id).update(position=models.F('position') - 1)
+            else:
+                # Moving up: shift items down
+                Deal.objects.filter(
+                    stage=target_stage,
+                    position__gte=target_position,
+                    position__lt=old_position,
+                    created_by=request.user
+                ).exclude(id=deal_id).update(position=models.F('position') + 1)
+
+            # Update the deal position
+            deal.position = target_position
+            deal.save()
+
+    return Response({
+        'message': 'Deal moved successfully',
+        'deal_id': deal.id,
+        'new_stage': target_stage.display_name,
+        'new_position': target_position
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def deal_stages(request):
+    """Get all available deal stages"""
+    stages = DealStage.objects.all()
+    stages_data = [{
+        'id': stage.id,
+        'name': stage.name,
+        'display_name': stage.display_name,
+        'order': stage.order,
+        'color': stage.color
+    } for stage in stages]
+
+    return Response(stages_data)

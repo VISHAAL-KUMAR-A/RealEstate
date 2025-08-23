@@ -354,3 +354,113 @@ class PropertyValuation(models.Model):
     def __str__(self):
         status = "✓" if self.valuation_successful else "✗"
         return f"{status} AI Valuation for {self.property_ref.address} - {self.created_at.strftime('%Y-%m-%d')}"
+
+
+class DealStage(models.Model):
+    """Deal pipeline stages (Acquisition, Review, Active, Closed)"""
+    STAGE_CHOICES = [
+        ('acquisition', 'Acquisition'),
+        ('review', 'Review'),
+        ('active', 'Active'),
+        ('closed', 'Closed'),
+    ]
+
+    name = models.CharField(max_length=20, choices=STAGE_CHOICES, unique=True)
+    display_name = models.CharField(max_length=50)
+    order = models.IntegerField(default=0)
+    color = models.CharField(max_length=7, default='#6B7280')  # Hex color code
+
+    class Meta:
+        ordering = ['order']
+
+    def __str__(self):
+        return self.display_name
+
+
+class Deal(models.Model):
+    """Real estate deals in the pipeline"""
+    PRIORITY_CHOICES = [
+        ('low', 'Low'),
+        ('medium', 'Medium'),
+        ('high', 'High'),
+    ]
+
+    STATUS_CHOICES = [
+        ('active', 'Active'),
+        ('on_hold', 'On Hold'),
+        ('cancelled', 'Cancelled'),
+        ('completed', 'Completed'),
+    ]
+
+    # Basic deal information
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+
+    # Property relationship (optional - deals might not always have a property)
+    property_ref = models.ForeignKey(
+        Property, on_delete=models.SET_NULL, null=True, blank=True, related_name='deals'
+    )
+
+    # Deal stage and metadata
+    stage = models.ForeignKey(
+        DealStage, on_delete=models.CASCADE, related_name='deals')
+    priority = models.CharField(
+        max_length=10, choices=PRIORITY_CHOICES, default='medium')
+    status = models.CharField(
+        max_length=15, choices=STATUS_CHOICES, default='active')
+
+    # Financial information
+    expected_purchase_price = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True
+    )
+    actual_purchase_price = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True
+    )
+    estimated_profit = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True
+    )
+
+    # Deal team and ownership
+    assigned_to = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_deals'
+    )
+    created_by = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='created_deals'
+    )
+
+    # Important dates
+    target_close_date = models.DateField(null=True, blank=True)
+    actual_close_date = models.DateField(null=True, blank=True)
+
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    # Position in stage (for drag-and-drop ordering)
+    position = models.IntegerField(default=0)
+
+    # Additional notes and documents
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['stage__order', 'position', '-created_at']
+        indexes = [
+            models.Index(fields=['stage', 'position']),
+            models.Index(fields=['created_by']),
+            models.Index(fields=['assigned_to']),
+            models.Index(fields=['status']),
+        ]
+
+    def __str__(self):
+        return f"{self.title} ({self.stage.display_name})"
+
+    @property
+    def address(self):
+        """Return property address if available"""
+        return self.property_ref.address if self.property_ref else None
+
+    @property
+    def days_in_stage(self):
+        """Calculate how many days the deal has been in current stage"""
+        from django.utils import timezone
+        return (timezone.now().date() - self.updated_at.date()).days

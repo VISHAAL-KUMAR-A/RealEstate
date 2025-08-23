@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { apiFetch, clearAuthTokens, logoutApi } from '../api/client.js'
 import PropertyMap from '../components/PropertyMap.jsx'
 import PropertyValuation from '../components/PropertyValuation.jsx'
+import DealPipeline from '../components/DealPipeline.jsx'
 
 function StatCard({ label, value, subtitle, loading }) {
   return (
@@ -341,7 +342,17 @@ export default function Dashboard({ profile, onLogout }) {
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
               }`}
             >
-              📊 Interactive Bar Chart Map
+              🗺️ Interactive Bar Chart Map
+            </button>
+            <button
+              onClick={() => setActiveTab('deals')}
+              className={`flex-1 px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                activeTab === 'deals'
+                  ? 'bg-slate-700 text-slate-100 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+              }`}
+            >
+              🏢 Deal Pipeline
             </button>
           </div>
         </div>
@@ -1001,6 +1012,11 @@ export default function Dashboard({ profile, onLogout }) {
               className="mb-8"
             />
           </>
+        )}
+
+        {/* Deals Content */}
+        {activeTab === 'deals' && (
+          <DealPipeline />
         )}
       </div>
       

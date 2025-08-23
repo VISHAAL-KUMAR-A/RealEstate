@@ -24,4 +24,10 @@ urlpatterns = [
          name='property_valuation'),
     path('properties/<int:property_id>/valuations/',
          views.property_valuations, name='property_valuations'),
+
+    # Deal Pipeline endpoints
+    path('deals/', views.deals, name='deals'),
+    path('deals/<int:deal_id>/', views.deal_detail, name='deal_detail'),
+    path('deals/move/', views.move_deal, name='move_deal'),
+    path('deal-stages/', views.deal_stages, name='deal_stages'),
 ]
