@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { apiFetch, clearAuthTokens, logoutApi } from '../api/client.js'
+import PropertyMap from '../components/PropertyMap.jsx'
 
 function StatCard({ label, value, subtitle, loading }) {
   return (
@@ -141,6 +142,7 @@ export default function Dashboard({ profile, onLogout }) {
   const [address1, setAddress1] = useState('')
   const [address2, setAddress2] = useState('')
   const [showAddPropertyForm, setShowAddPropertyForm] = useState(false)
+  const [activeTab, setActiveTab] = useState('dashboard') // 'dashboard' or 'map'
 
   const fetchDashboardStats = useCallback(async () => {
     try {
@@ -292,10 +294,39 @@ export default function Dashboard({ profile, onLogout }) {
       </header>
 
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
-        {/* Dashboard Stats */}
+        {/* Tab Navigation */}
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-slate-100 mb-2">Investment Dashboard</h1>
-          <p className="text-slate-400 mb-6">Add specific property addresses to get real-time data from ATTOM API and analyze investment opportunities</p>
+          <div className="flex space-x-1 bg-slate-900 rounded-lg p-1">
+            <button
+              onClick={() => setActiveTab('dashboard')}
+              className={`flex-1 px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                activeTab === 'dashboard'
+                  ? 'bg-slate-700 text-slate-100 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+              }`}
+            >
+              📊 Dashboard & Analytics
+            </button>
+            <button
+              onClick={() => setActiveTab('map')}
+              className={`flex-1 px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                activeTab === 'map'
+                  ? 'bg-slate-700 text-slate-100 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+              }`}
+            >
+              📊 Interactive Bar Chart Map
+            </button>
+          </div>
+        </div>
+
+        {/* Dashboard Content */}
+        {activeTab === 'dashboard' && (
+          <>
+            {/* Dashboard Stats */}
+            <div className="mb-8">
+              <h1 className="text-2xl font-bold text-slate-100 mb-2">Investment Dashboard</h1>
+              <p className="text-slate-400 mb-6">Add specific property addresses to get real-time data from ATTOM API and analyze investment opportunities</p>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard 
               label="Total Properties" 
@@ -825,6 +856,123 @@ export default function Dashboard({ profile, onLogout }) {
             </div>
           )}
         </div>
+          </>
+        )}
+
+        {/* Map Content */}
+        {activeTab === 'map' && (
+          <>
+            <div className="mb-8">
+              <h1 className="text-2xl font-bold text-slate-100 mb-2">Interactive Property Bar Chart Map</h1>
+              <p className="text-slate-400 mb-6">Visualize your property portfolio with bar graphs - bar height shows metric value, color indicates profitability category</p>
+            </div>
+            
+            {/* Map Filters */}
+            <div className="mb-6 flex flex-wrap gap-4 items-center">
+              <div className="flex flex-wrap gap-3">
+                <input
+                  type="text" 
+                  placeholder="Filter by city..."
+                  className="input text-sm w-40"
+                  onChange={(e) => {
+                    // Update filters for map
+                    setFilters(prev => ({...prev, city: e.target.value}))
+                  }}
+                />
+                <input
+                  type="text" 
+                  placeholder="Filter by state..."
+                  className="input text-sm w-40"
+                  onChange={(e) => {
+                    setFilters(prev => ({...prev, state: e.target.value}))
+                  }}
+                />
+                <input
+                  type="number" 
+                  placeholder="Min score..."
+                  className="input text-sm w-32"
+                  onChange={(e) => {
+                    setFilters(prev => ({...prev, min_investment_score: e.target.value}))
+                  }}
+                />
+              </div>
+              
+              <button
+                onClick={() => setShowAddPropertyForm(!showAddPropertyForm)}
+                className="btn-primary text-sm"
+              >
+                Add Property from ATTOM
+              </button>
+            </div>
+
+            {/* Add Property Form for Map Tab */}
+            {showAddPropertyForm && (
+              <div className="mb-8 glass rounded-xl p-6">
+                <h3 className="text-lg font-semibold text-slate-100 mb-4">Add Property from ATTOM API</h3>
+                <div className="text-sm text-slate-400 mb-4">
+                  ATTOM API requires specific property addresses. Enter the exact street address and city/state.
+                </div>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-2">
+                      Street Address
+                    </label>
+                    <input
+                      type="text"
+                      value={address1}
+                      onChange={(e) => setAddress1(e.target.value)}
+                      placeholder="e.g., 4529 Winona Court"
+                      className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-slate-100 placeholder-slate-400 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-2">
+                      City, State
+                    </label>
+                    <input
+                      type="text"
+                      value={address2}
+                      onChange={(e) => setAddress2(e.target.value)}
+                      placeholder="e.g., Denver, CO"
+                      className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-slate-100 placeholder-slate-400 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => handleSyncData(address1, address2)}
+                      disabled={syncing || !address1 || !address2}
+                      className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {syncing ? 'Adding Property...' : 'Add Property'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowAddPropertyForm(false)
+                        setAddress1('')
+                        setAddress2('')
+                      }}
+                      className="px-4 py-2 text-slate-400 hover:text-slate-200 border border-slate-600 rounded-lg hover:border-slate-500 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    <strong>Examples:</strong><br/>
+                    • 4529 Winona Court, Denver, CO<br/>
+                    • 468 Sequoia Dr, Smyrna, DE<br/>
+                    • 123 Main Street, Atlanta, GA
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Property Map Component */}
+            <PropertyMap 
+              filters={filters}
+              className="mb-8"
+            />
+          </>
+        )}
       </div>
     </div>
   )

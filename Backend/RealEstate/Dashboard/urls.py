@@ -12,6 +12,8 @@ urlpatterns = [
          name='investment_opportunities'),
     path('properties/', views.properties, name='properties'),
     path('best-deals/', views.best_deals, name='best_deals'),
+    path('properties-map-data/', views.properties_map_data,
+         name='properties_map_data'),
     path('dashboard-stats/', views.dashboard_stats, name='dashboard_stats'),
     path('sync-property-data/', views.sync_property_data,
          name='sync_property_data'),

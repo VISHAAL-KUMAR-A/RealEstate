@@ -420,6 +420,110 @@ def properties(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+def properties_map_data(request):
+    """Get property data optimized for map visualization"""
+    # Get base queryset for synced properties with coordinates and metrics
+    queryset = Property.objects.filter(
+        last_api_sync__isnull=False,
+        latitude__isnull=False,
+        longitude__isnull=False,
+        metrics__isnull=False
+    ).select_related('metrics')
+
+    # Apply basic filtering
+    city = request.GET.get('city', '')
+    state = request.GET.get('state', '')
+    min_investment_score = request.GET.get('min_investment_score')
+    max_investment_score = request.GET.get('max_investment_score')
+
+    if city:
+        queryset = queryset.filter(city__icontains=city)
+    if state:
+        queryset = queryset.filter(state__icontains=state)
+    if min_investment_score:
+        queryset = queryset.filter(
+            metrics__investment_score__gte=min_investment_score)
+    if max_investment_score:
+        queryset = queryset.filter(
+            metrics__investment_score__lte=max_investment_score)
+
+    # Limit to reasonable number for map performance
+    limit = int(request.GET.get('limit', 500))
+    properties = queryset.order_by('-metrics__investment_score')[:limit]
+
+    # Create map-optimized response
+    map_properties = []
+    for prop in properties:
+        # Determine color based on investment score
+        investment_score = float(
+            prop.metrics.investment_score) if prop.metrics.investment_score else 0
+
+        # Color categories: Green (High), Yellow (Medium), Red (Low)
+        if investment_score >= 70:
+            color = '#10B981'  # Green
+            category = 'high'
+        elif investment_score >= 40:
+            color = '#F59E0B'  # Yellow
+            category = 'medium'
+        else:
+            color = '#EF4444'  # Red
+            category = 'low'
+
+        map_properties.append({
+            'id': prop.id,
+            'latitude': float(prop.latitude),
+            'longitude': float(prop.longitude),
+            'address': prop.address,
+            'city': prop.city,
+            'state': prop.state,
+            'current_price': float(prop.current_price) if prop.current_price else None,
+            'estimated_rent': float(prop.estimated_rent) if prop.estimated_rent else None,
+            'property_type': prop.property_type,
+            'bedrooms': prop.bedrooms,
+            'bathrooms': float(prop.bathrooms) if prop.bathrooms else None,
+            'square_feet': prop.square_feet,
+            'investment_score': investment_score,
+            'cap_rate': float(prop.metrics.cap_rate) if prop.metrics.cap_rate else None,
+            'estimated_profit': float(prop.metrics.estimated_profit) if prop.metrics.estimated_profit else None,
+            'net_operating_income': float(prop.metrics.net_operating_income) if prop.metrics.net_operating_income else None,
+            'color': color,
+            'category': category
+        })
+
+    # Calculate map bounds
+    if map_properties:
+        lats = [p['latitude'] for p in map_properties]
+        lngs = [p['longitude'] for p in map_properties]
+        bounds = {
+            'north': max(lats),
+            'south': min(lats),
+            'east': max(lngs),
+            'west': min(lngs)
+        }
+        # Add padding
+        lat_padding = (bounds['north'] - bounds['south']) * 0.1
+        lng_padding = (bounds['east'] - bounds['west']) * 0.1
+        bounds['north'] += lat_padding
+        bounds['south'] -= lat_padding
+        bounds['east'] += lng_padding
+        bounds['west'] -= lng_padding
+    else:
+        bounds = None
+
+    return Response({
+        'properties': map_properties,
+        'count': len(map_properties),
+        'bounds': bounds,
+        'color_legend': {
+            'high': {'color': '#10B981', 'label': 'High Score (70+)', 'description': 'Excellent investment opportunity'},
+            'medium': {'color': '#F59E0B', 'label': 'Medium Score (40-69)', 'description': 'Good investment potential'},
+            'low': {'color': '#EF4444', 'label': 'Low Score (<40)', 'description': 'Lower investment potential'}
+        }
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def best_deals(request):
     """Advanced filtering and sorting for best investment deals"""
 
