@@ -30,4 +30,5 @@ urlpatterns = [
     path('deals/<int:deal_id>/', views.deal_detail, name='deal_detail'),
     path('deals/move/', views.move_deal, name='move_deal'),
     path('deal-stages/', views.deal_stages, name='deal_stages'),
+    path('deal-types/', views.deal_types, name='deal_types'),
 ]

@@ -764,6 +764,11 @@ def deals(request):
             'stage', 'property_ref', 'assigned_to', 'created_by'
         ).filter(created_by=request.user)
 
+        # Apply filters
+        deal_type_filter = request.GET.get('deal_type')
+        if deal_type_filter:
+            deals_queryset = deals_queryset.filter(deal_type=deal_type_filter)
+
         # Organize deals by stage
         deals_by_stage = {}
         stages = DealStage.objects.all()
@@ -787,6 +792,7 @@ def deals(request):
                 'description': deal.description,
                 'priority': deal.priority,
                 'status': deal.status,
+                'deal_type': deal.deal_type,
                 'expected_purchase_price': float(deal.expected_purchase_price) if deal.expected_purchase_price else None,
                 'actual_purchase_price': float(deal.actual_purchase_price) if deal.actual_purchase_price else None,
                 'estimated_profit': float(deal.estimated_profit) if deal.estimated_profit else None,
@@ -845,12 +851,16 @@ def deals(request):
                     'error': 'Property not found'
                 }, status=status.HTTP_400_BAD_REQUEST)
 
+        # Get deal type from user input - manual selection only
+        deal_type = request.data.get('deal_type', 'other')
+
         deal = Deal.objects.create(
             title=title,
             description=request.data.get('description', ''),
             property_ref=property_obj,
             stage=stage,
             priority=request.data.get('priority', 'medium'),
+            deal_type=deal_type,
             expected_purchase_price=request.data.get(
                 'expected_purchase_price'),
             estimated_profit=request.data.get('estimated_profit'),
@@ -864,6 +874,7 @@ def deals(request):
             'id': deal.id,
             'title': deal.title,
             'stage': deal.stage.name,
+            'deal_type': deal.deal_type,
             'message': 'Deal created successfully'
         }, status=status.HTTP_201_CREATED)
 
@@ -893,6 +904,7 @@ def deal_detail(request, deal_id):
             },
             'priority': deal.priority,
             'status': deal.status,
+            'deal_type': deal.deal_type,
             'expected_purchase_price': float(deal.expected_purchase_price) if deal.expected_purchase_price else None,
             'actual_purchase_price': float(deal.actual_purchase_price) if deal.actual_purchase_price else None,
             'estimated_profit': float(deal.estimated_profit) if deal.estimated_profit else None,
@@ -939,6 +951,11 @@ def deal_detail(request, deal_id):
         deal.actual_close_date = request.data.get(
             'actual_close_date', deal.actual_close_date)
         deal.notes = request.data.get('notes', deal.notes)
+
+        # Handle deal type update - manual selection only
+        new_deal_type = request.data.get('deal_type')
+        if new_deal_type:
+            deal.deal_type = new_deal_type
 
         # Handle property assignment
         property_id = request.data.get('property_id')
@@ -1077,3 +1094,17 @@ def deal_stages(request):
     } for stage in stages]
 
     return Response(stages_data)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def deal_types(request):
+    """Get all available deal types"""
+    deal_types_data = []
+    for key, label in Deal.DEAL_TYPE_CHOICES:
+        deal_types_data.append({
+            'key': key,
+            'label': label
+        })
+
+    return Response(deal_types_data)

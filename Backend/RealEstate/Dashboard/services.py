@@ -910,3 +910,6 @@ Please structure your response as follows:
             logger.error(f"Error parsing valuation response: {e}")
 
         return valuation_data
+
+
+# DealClassificationService has been removed - deals now use manual classification only

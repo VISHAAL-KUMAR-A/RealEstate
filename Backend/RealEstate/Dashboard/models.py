@@ -392,6 +392,20 @@ class Deal(models.Model):
         ('completed', 'Completed'),
     ]
 
+    DEAL_TYPE_CHOICES = [
+        ('rezoning', 'Rezoning'),
+        ('distressed', 'Distressed'),
+        ('arbitrage', 'Arbitrage'),
+        ('flip', 'Fix & Flip'),
+        ('rental', 'Buy & Hold Rental'),
+        ('development', 'Development'),
+        ('wholesale', 'Wholesale'),
+        ('brrr', 'BRRR (Buy, Rehab, Rent, Refinance)'),
+        ('commercial', 'Commercial'),
+        ('land', 'Land Banking'),
+        ('other', 'Other'),
+    ]
+
     # Basic deal information
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
@@ -408,6 +422,12 @@ class Deal(models.Model):
         max_length=10, choices=PRIORITY_CHOICES, default='medium')
     status = models.CharField(
         max_length=15, choices=STATUS_CHOICES, default='active')
+
+    # Deal categorization
+    deal_type = models.CharField(
+        max_length=20, choices=DEAL_TYPE_CHOICES, default='other',
+        help_text='Deal type category - select the most appropriate option'
+    )
 
     # Financial information
     expected_purchase_price = models.DecimalField(
@@ -449,6 +469,7 @@ class Deal(models.Model):
             models.Index(fields=['created_by']),
             models.Index(fields=['assigned_to']),
             models.Index(fields=['status']),
+            models.Index(fields=['deal_type']),
         ]
 
     def __str__(self):

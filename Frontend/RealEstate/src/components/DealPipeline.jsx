@@ -26,8 +26,23 @@ const priorityColors = {
   high: 'bg-red-500/20 text-red-400 border-red-500/30'
 }
 
+// Deal type color mapping
+const dealTypeColors = {
+  rezoning: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
+  distressed: 'bg-red-500/20 text-red-400 border-red-500/30',
+  arbitrage: 'bg-green-500/20 text-green-400 border-green-500/30',
+  flip: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
+  rental: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+  development: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30',
+  wholesale: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
+  brrr: 'bg-teal-500/20 text-teal-400 border-teal-500/30',
+  commercial: 'bg-gray-500/20 text-gray-400 border-gray-500/30',
+  land: 'bg-lime-500/20 text-lime-400 border-lime-500/30',
+  other: 'bg-slate-500/20 text-slate-400 border-slate-500/30'
+}
+
 // Deal Card Component
-function DealCard({ deal, onEdit, onDelete }) {
+function DealCard({ deal, onEdit, onDelete, dealTypes = [] }) {
   const {
     attributes,
     listeners,
@@ -121,14 +136,23 @@ function DealCard({ deal, onEdit, onDelete }) {
           </div>
         )}
         
-        <div className="flex justify-between items-center mb-2">
-          <span className={`px-2 py-1 text-xs rounded border ${priorityColors[deal.priority]}`}>
-            {deal.priority.toUpperCase()}
-          </span>
-          {deal.expected_purchase_price && (
-            <span className="text-slate-300 text-xs font-semibold">
-              ${deal.expected_purchase_price.toLocaleString()}
+        <div className="space-y-2 mb-2">
+          <div className="flex justify-between items-center">
+            <span className={`px-2 py-1 text-xs rounded border ${priorityColors[deal.priority]}`}>
+              {deal.priority.toUpperCase()}
             </span>
+            {deal.expected_purchase_price && (
+              <span className="text-slate-300 text-xs font-semibold">
+                ${deal.expected_purchase_price.toLocaleString()}
+              </span>
+            )}
+          </div>
+          {deal.deal_type && (
+            <div className="flex">
+              <span className={`px-2 py-1 text-xs rounded border ${dealTypeColors[deal.deal_type] || dealTypeColors.other}`}>
+                {dealTypes.find(type => type.key === deal.deal_type)?.label || deal.deal_type.toUpperCase()}
+              </span>
+            </div>
           )}
         </div>
         
@@ -148,7 +172,7 @@ function DealCard({ deal, onEdit, onDelete }) {
 }
 
 // Sortable Container for each stage
-function DroppableStage({ stage, deals, onEdit, onDelete }) {
+function DroppableStage({ stage, deals, onEdit, onDelete, dealTypes = [] }) {
   const {
     setNodeRef,
     isOver,
@@ -189,6 +213,7 @@ function DroppableStage({ stage, deals, onEdit, onDelete }) {
                 deal={deal} 
                 onEdit={onEdit}
                 onDelete={onDelete}
+                dealTypes={dealTypes}
               />
             ))}
           </SortableContext>
@@ -205,11 +230,12 @@ function DroppableStage({ stage, deals, onEdit, onDelete }) {
 }
 
 // Deal Form Modal
-function DealForm({ deal, isOpen, onClose, onSubmit, properties = [] }) {
+function DealForm({ deal, isOpen, onClose, onSubmit, properties = [], dealTypes = [] }) {
   const [formData, setFormData] = useState({
     title: '',
     description: '',
     priority: 'medium',
+    deal_type: '',
     expected_purchase_price: '',
     estimated_profit: '',
     target_close_date: '',
@@ -223,6 +249,7 @@ function DealForm({ deal, isOpen, onClose, onSubmit, properties = [] }) {
         title: deal.title || '',
         description: deal.description || '',
         priority: deal.priority || 'medium',
+        deal_type: deal.deal_type || '',
         expected_purchase_price: deal.expected_purchase_price || '',
         estimated_profit: deal.estimated_profit || '',
         target_close_date: deal.target_close_date || '',
@@ -234,6 +261,7 @@ function DealForm({ deal, isOpen, onClose, onSubmit, properties = [] }) {
         title: '',
         description: '',
         priority: 'medium',
+        deal_type: '',
         expected_purchase_price: '',
         estimated_profit: '',
         target_close_date: '',
@@ -310,6 +338,24 @@ function DealForm({ deal, isOpen, onClose, onSubmit, properties = [] }) {
                 className="w-full bg-slate-800 border border-slate-600 rounded px-3 py-2 text-slate-100"
               />
             </div>
+          </div>
+          
+          <div>
+            <label className="block text-slate-300 text-sm mb-1">
+              Deal Type
+            </label>
+            <select
+              value={formData.deal_type}
+              onChange={(e) => setFormData({ ...formData, deal_type: e.target.value })}
+              className="w-full bg-slate-800 border border-slate-600 rounded px-3 py-2 text-slate-100"
+            >
+              <option value="">Select deal type...</option>
+              {dealTypes.map((type) => (
+                <option key={type.key} value={type.key}>
+                  {type.label}
+                </option>
+              ))}
+            </select>
           </div>
           
           <div className="grid grid-cols-2 gap-4">
@@ -396,6 +442,8 @@ export default function DealPipeline() {
   const [showForm, setShowForm] = useState(false)
   const [editingDeal, setEditingDeal] = useState(null)
   const [properties, setProperties] = useState([])
+  const [dealTypes, setDealTypes] = useState([])
+  const [selectedDealType, setSelectedDealType] = useState('')
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -408,15 +456,23 @@ export default function DealPipeline() {
   const loadDeals = async () => {
     try {
       setLoading(true)
-      const [dealsResponse, propertiesResponse] = await Promise.all([
-        apiFetch('/api/deals/').then(res => res.json()),
-        apiFetch('/api/properties/?limit=100').then(res => res.json())
+      
+      // Build deals URL with filters
+      const dealsUrl = selectedDealType 
+        ? `/api/deals/?deal_type=${selectedDealType}`
+        : '/api/deals/'
+      
+      const [dealsResponse, propertiesResponse, dealTypesResponse] = await Promise.all([
+        apiFetch(dealsUrl).then(res => res.json()),
+        apiFetch('/api/properties/?limit=100').then(res => res.json()),
+        apiFetch('/api/deal-types/').then(res => res.json())
       ])
       
       setDeals(dealsResponse)
       if (propertiesResponse.results) {
         setProperties(propertiesResponse.results)
       }
+      setDealTypes(dealTypesResponse)
       setError(null)
     } catch (err) {
       console.error('Error loading deals:', err)
@@ -428,7 +484,7 @@ export default function DealPipeline() {
 
   useEffect(() => {
     loadDeals()
-  }, [])
+  }, [selectedDealType])
 
   const handleDragStart = (event) => {
     const { active } = event
@@ -665,6 +721,34 @@ export default function DealPipeline() {
         </button>
       </div>
 
+      {/* Deal Type Filters */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-slate-300 text-sm font-medium">Filter by type:</span>
+        <button
+          onClick={() => setSelectedDealType('')}
+          className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+            selectedDealType === '' 
+              ? 'bg-blue-600 text-white' 
+              : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+          }`}
+        >
+          All Types
+        </button>
+        {dealTypes.map((type) => (
+          <button
+            key={type.key}
+            onClick={() => setSelectedDealType(type.key)}
+            className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+              selectedDealType === type.key 
+                ? 'bg-blue-600 text-white' 
+                : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+            }`}
+          >
+            {type.label}
+          </button>
+        ))}
+      </div>
+
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
@@ -679,6 +763,7 @@ export default function DealPipeline() {
               deals={stage.deals}
               onEdit={openEditForm}
               onDelete={handleDeleteDeal}
+              dealTypes={dealTypes}
             />
           ))}
         </div>
@@ -699,6 +784,7 @@ export default function DealPipeline() {
         onClose={closeForm}
         onSubmit={editingDeal ? handleUpdateDeal : handleCreateDeal}
         properties={properties}
+        dealTypes={dealTypes}
       />
     </div>
   )
