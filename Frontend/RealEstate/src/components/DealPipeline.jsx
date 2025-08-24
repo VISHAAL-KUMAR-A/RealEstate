@@ -2,21 +2,19 @@ import React, { useState, useEffect } from 'react'
 import {
   DndContext,
   DragOverlay,
-  closestCorners,
+  closestCenter,
   KeyboardSensor,
   PointerSensor,
   useSensor,
   useSensors,
+  useDroppable,
 } from '@dnd-kit/core'
 import {
   SortableContext,
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
-import {
-  restrictToVerticalAxis,
-  restrictToParentElement,
-} from '@dnd-kit/modifiers'
+
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { apiFetch } from '../api/client.js'
@@ -67,73 +65,83 @@ function DealCard({ deal, onEdit, onDelete }) {
       ref={setNodeRef}
       style={style}
       {...attributes}
-      {...listeners}
-      className="card hover:border-slate-600 transition-colors cursor-grab active:cursor-grabbing"
+      className="card hover:border-slate-600 transition-colors"
     >
       <div className="flex justify-between items-start mb-2">
-        <h4 className="text-slate-100 font-semibold text-sm">{deal.title}</h4>
+        <div 
+          {...listeners}
+          className="flex-1 cursor-grab active:cursor-grabbing"
+        >
+          <h4 className="text-slate-100 font-semibold text-sm">{deal.title}</h4>
+        </div>
         <div className="flex gap-1">
           <button
             onClick={(e) => {
               e.stopPropagation()
+              e.preventDefault()
               onEdit(deal)
             }}
-            className="text-blue-400 hover:text-blue-300 text-xs p-1"
+            className="text-blue-400 hover:text-blue-300 text-xs p-1 hover:bg-slate-700 rounded transition-colors"
             title="Edit Deal"
+            type="button"
           >
             ✏️
           </button>
           <button
             onClick={(e) => {
               e.stopPropagation()
+              e.preventDefault()
               onDelete(deal.id)
             }}
-            className="text-red-400 hover:text-red-300 text-xs p-1"
+            className="text-red-400 hover:text-red-300 text-xs p-1 hover:bg-slate-700 rounded transition-colors"
             title="Delete Deal"
+            type="button"
           >
             🗑️
           </button>
         </div>
       </div>
       
-      {deal.description && (
-        <p className="text-slate-400 text-xs mb-2 line-clamp-2">
-          {deal.description}
-        </p>
-      )}
-      
-      {deal.property && (
-        <div className="mb-2 p-2 bg-slate-800/50 rounded text-xs">
-          <div className="text-slate-300 font-medium">{deal.property.address}</div>
-          <div className="text-slate-400">{deal.property.city}, {deal.property.state}</div>
-          {deal.property.current_price && (
-            <div className="text-green-400 font-semibold">
-              ${deal.property.current_price.toLocaleString()}
-            </div>
+      <div {...listeners} className="cursor-grab active:cursor-grabbing">
+        {deal.description && (
+          <p className="text-slate-400 text-xs mb-2 line-clamp-2">
+            {deal.description}
+          </p>
+        )}
+        
+        {deal.property && (
+          <div className="mb-2 p-2 bg-slate-800/50 rounded text-xs">
+            <div className="text-slate-300 font-medium">{deal.property.address}</div>
+            <div className="text-slate-400">{deal.property.city}, {deal.property.state}</div>
+            {deal.property.current_price && (
+              <div className="text-green-400 font-semibold">
+                ${deal.property.current_price.toLocaleString()}
+              </div>
+            )}
+          </div>
+        )}
+        
+        <div className="flex justify-between items-center mb-2">
+          <span className={`px-2 py-1 text-xs rounded border ${priorityColors[deal.priority]}`}>
+            {deal.priority.toUpperCase()}
+          </span>
+          {deal.expected_purchase_price && (
+            <span className="text-slate-300 text-xs font-semibold">
+              ${deal.expected_purchase_price.toLocaleString()}
+            </span>
           )}
         </div>
-      )}
-      
-      <div className="flex justify-between items-center mb-2">
-        <span className={`px-2 py-1 text-xs rounded border ${priorityColors[deal.priority]}`}>
-          {deal.priority.toUpperCase()}
-        </span>
-        {deal.expected_purchase_price && (
-          <span className="text-slate-300 text-xs font-semibold">
-            ${deal.expected_purchase_price.toLocaleString()}
-          </span>
+        
+        {deal.target_close_date && (
+          <div className="text-xs text-slate-400 mb-2">
+            Target: {new Date(deal.target_close_date).toLocaleDateString()}
+          </div>
         )}
-      </div>
-      
-      {deal.target_close_date && (
-        <div className="text-xs text-slate-400 mb-2">
-          Target: {new Date(deal.target_close_date).toLocaleDateString()}
+        
+        <div className="flex justify-between items-center text-xs text-slate-500">
+          <span>{deal.days_in_stage} days in stage</span>
+          {deal.assigned_to && <span>👤 {deal.assigned_to}</span>}
         </div>
-      )}
-      
-      <div className="flex justify-between items-center text-xs text-slate-500">
-        <span>{deal.days_in_stage} days in stage</span>
-        {deal.assigned_to && <span>👤 {deal.assigned_to}</span>}
       </div>
     </div>
   )
@@ -144,7 +152,7 @@ function DroppableStage({ stage, deals, onEdit, onDelete }) {
   const {
     setNodeRef,
     isOver,
-  } = useSortable({
+  } = useDroppable({
     id: stage.name,
     data: {
       type: 'stage',
@@ -425,44 +433,99 @@ export default function DealPipeline() {
   const handleDragStart = (event) => {
     const { active } = event
     const deal = active.data.current?.deal
+    console.log('Drag started:', { activeId: active.id, deal })
     setActiveDeal(deal)
   }
 
   const handleDragEnd = async (event) => {
     const { active, over } = event
+    console.log('Drag ended:', { 
+      activeId: active.id, 
+      overId: over?.id, 
+      overData: over?.data?.current 
+    })
     setActiveDeal(null)
 
-    if (!over) return
+    if (!over) {
+      console.log('No drop target found')
+      return
+    }
 
     const activeDeal = active.data.current?.deal
-    const overStage = over.data.current?.stage
+    const overId = over.id
+    const overData = over.data.current
 
-    if (!activeDeal || !overStage) return
+    if (!activeDeal) {
+      console.log('No active deal found')
+      return
+    }
 
-    // If dropped on the same stage, do nothing
-    if (activeDeal.stage === overStage.name) return
+    // Determine if we're dropping on a stage or another deal
+    let targetStageName = null
+    let targetPosition = 0
+
+    if (overData?.type === 'stage') {
+      // Dropped on a stage - use the stage name directly
+      targetStageName = overData.stage.name
+      targetPosition = 0
+    } else if (overData?.type === 'deal') {
+      // Dropped on another deal - find its stage and position
+      const overDeal = overData.deal
+      
+      // Find the stage containing this deal
+      for (const [stageName, stageData] of Object.entries(deals)) {
+        const dealIndex = stageData.deals.findIndex(d => d.id === overDeal.id)
+        if (dealIndex !== -1) {
+          targetStageName = stageName
+          targetPosition = dealIndex
+          break
+        }
+      }
+    }
+
+    if (!targetStageName) {
+      console.log('No target stage found', { overId, overData })
+      return
+    }
+
+    // If dropping on the same deal, do nothing
+    if (activeDeal.id === overId) return
+
+    // If dropping on the same stage and same position, do nothing
+    if (activeDeal.stage === targetStageName && targetPosition === 0 && overData?.type === 'stage') {
+      return
+    }
+
+    console.log('Moving deal:', { 
+      dealId: activeDeal.id, 
+      from: activeDeal.stage, 
+      to: targetStageName, 
+      position: targetPosition 
+    })
 
     try {
-      // Move deal to new stage
+      // Always move the deal, even within the same stage for reordering
       const response = await apiFetch('/api/deals/move/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           deal_id: activeDeal.id,
-          target_stage: overStage.name,
-          target_position: 0
+          target_stage: targetStageName,
+          target_position: targetPosition
         })
       })
 
       if (!response.ok) {
-        throw new Error('Failed to move deal')
+        const errorData = await response.json()
+        console.error('Move deal error:', errorData)
+        throw new Error(`Failed to move deal: ${errorData.error || 'Unknown error'}`)
       }
 
       // Reload deals to reflect changes
       await loadDeals()
     } catch (error) {
       console.error('Error moving deal:', error)
-      setError('Failed to move deal')
+      setError(`Failed to move deal: ${error.message}`)
     }
   }
 
@@ -604,10 +667,9 @@ export default function DealPipeline() {
 
       <DndContext
         sensors={sensors}
-        collisionDetection={closestCorners}
+        collisionDetection={closestCenter}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
-        modifiers={[restrictToVerticalAxis, restrictToParentElement]}
       >
         <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 overflow-x-auto">
           {sortedStages.map((stage) => (
