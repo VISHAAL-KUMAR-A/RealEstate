@@ -31,4 +31,16 @@ urlpatterns = [
     path('deals/move/', views.move_deal, name='move_deal'),
     path('deal-stages/', views.deal_stages, name='deal_stages'),
     path('deal-types/', views.deal_types, name='deal_types'),
+
+    # Portfolio Management endpoints
+    path('portfolio/', views.user_portfolio, name='user_portfolio'),
+    path('portfolio/<int:property_id>/', views.portfolio_property_detail,
+         name='portfolio_property_detail'),
+    path('portfolio/transactions/', views.rental_transactions,
+         name='rental_transactions'),
+    path('portfolio/transactions/<int:transaction_id>/', views.rental_transaction_detail,
+         name='rental_transaction_detail'),
+    path('portfolio/metrics/', views.portfolio_metrics, name='portfolio_metrics'),
+    path('portfolio/chart-data/', views.portfolio_performance_chart_data,
+         name='portfolio_chart_data'),
 ]

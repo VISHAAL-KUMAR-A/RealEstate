@@ -3,6 +3,7 @@ import { apiFetch, clearAuthTokens, logoutApi } from '../api/client.js'
 import PropertyMap from '../components/PropertyMap.jsx'
 import PropertyValuation from '../components/PropertyValuation.jsx'
 import DealPipeline from '../components/DealPipeline.jsx'
+import Portfolio from '../components/Portfolio.jsx'
 
 function StatCard({ label, value, subtitle, loading }) {
   return (
@@ -353,6 +354,16 @@ export default function Dashboard({ profile, onLogout }) {
               }`}
             >
               🏢 Deal Pipeline
+            </button>
+            <button
+              onClick={() => setActiveTab('portfolio')}
+              className={`flex-1 px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                activeTab === 'portfolio'
+                  ? 'bg-slate-700 text-slate-100 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+              }`}
+            >
+              📂 Portfolio Review
             </button>
           </div>
         </div>
@@ -1017,6 +1028,10 @@ export default function Dashboard({ profile, onLogout }) {
         {/* Deals Content */}
         {activeTab === 'deals' && (
           <DealPipeline />
+        )}
+
+        {activeTab === 'portfolio' && (
+          <Portfolio />
         )}
       </div>
       

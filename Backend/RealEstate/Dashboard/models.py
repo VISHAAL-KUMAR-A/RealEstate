@@ -485,3 +485,354 @@ class Deal(models.Model):
         """Calculate how many days the deal has been in current stage"""
         from django.utils import timezone
         return (timezone.now().date() - self.updated_at.date()).days
+
+
+class UserOwnedProperty(models.Model):
+    """Properties owned by users for portfolio tracking"""
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    property_ref = models.ForeignKey(
+        Property, on_delete=models.CASCADE, null=True, blank=True)
+
+    # Property details (for properties not in Property model)
+    custom_address = models.CharField(max_length=500, blank=True)
+    custom_city = models.CharField(max_length=100, blank=True)
+    custom_state = models.CharField(max_length=50, blank=True)
+    custom_zip_code = models.CharField(max_length=20, blank=True)
+    custom_property_type = models.CharField(max_length=50, blank=True)
+    custom_bedrooms = models.IntegerField(null=True, blank=True)
+    custom_bathrooms = models.DecimalField(
+        max_digits=3, decimal_places=1, null=True, blank=True)
+    custom_square_feet = models.IntegerField(null=True, blank=True)
+
+    # Purchase details
+    purchase_price = models.DecimalField(max_digits=15, decimal_places=2)
+    purchase_date = models.DateField()
+    down_payment = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True)
+    loan_amount = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True)
+    interest_rate = models.DecimalField(
+        max_digits=5, decimal_places=3, null=True, blank=True)  # 4.250%
+    loan_term_years = models.IntegerField(null=True, blank=True)
+
+    # Current values
+    current_estimated_value = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True)
+    last_valuation_date = models.DateField(null=True, blank=True)
+
+    # Rental information
+    monthly_rent = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True)
+    security_deposit = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True)
+
+    # Property management
+    property_manager = models.CharField(max_length=200, blank=True)
+    management_fee_percent = models.DecimalField(
+        max_digits=4, decimal_places=2, null=True, blank=True)
+
+    # Status
+    PROPERTY_STATUS_CHOICES = [
+        ('owned', 'Owned'),
+        ('rented', 'Rented Out'),
+        ('vacant', 'Vacant'),
+        ('selling', 'For Sale'),
+        ('sold', 'Sold'),
+    ]
+    status = models.CharField(
+        max_length=10, choices=PROPERTY_STATUS_CHOICES, default='owned')
+
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['user', 'status']),
+            models.Index(fields=['purchase_date']),
+        ]
+
+    @property
+    def address(self):
+        """Return address from property_ref or custom fields"""
+        if self.property_ref:
+            return self.property_ref.address
+        return self.custom_address
+
+    @property
+    def city(self):
+        """Return city from property_ref or custom fields"""
+        if self.property_ref:
+            return self.property_ref.city
+        return self.custom_city
+
+    @property
+    def state(self):
+        """Return state from property_ref or custom fields"""
+        if self.property_ref:
+            return self.property_ref.state
+        return self.custom_state
+
+    @property
+    def property_type(self):
+        """Return property type from property_ref or custom fields"""
+        if self.property_ref:
+            return self.property_ref.property_type
+        return self.custom_property_type
+
+    @property
+    def current_equity(self):
+        """Calculate current equity (current value - remaining loan balance)"""
+        if not self.current_estimated_value:
+            return None
+
+        remaining_balance = self.remaining_loan_balance
+        if remaining_balance is None:
+            remaining_balance = 0
+
+        return self.current_estimated_value - remaining_balance
+
+    @property
+    def remaining_loan_balance(self):
+        """Calculate remaining loan balance"""
+        if not all([self.loan_amount, self.interest_rate, self.loan_term_years]):
+            return None
+
+        from datetime import date
+        from decimal import Decimal
+        import math
+
+        monthly_rate = float(self.interest_rate) / 100 / 12
+        total_payments = self.loan_term_years * 12
+
+        # Calculate monthly payment
+        if monthly_rate == 0:
+            monthly_payment = float(self.loan_amount) / total_payments
+        else:
+            monthly_payment = float(self.loan_amount) * (monthly_rate * (
+                1 + monthly_rate)**total_payments) / ((1 + monthly_rate)**total_payments - 1)
+
+        # Calculate payments made
+        months_elapsed = (date.today().year - self.purchase_date.year) * \
+            12 + (date.today().month - self.purchase_date.month)
+        months_elapsed = max(0, min(months_elapsed, total_payments))
+
+        # Calculate remaining balance
+        if months_elapsed >= total_payments:
+            return Decimal('0.00')
+
+        remaining_payments = total_payments - months_elapsed
+        remaining_balance = monthly_payment * ((1 + monthly_rate)**remaining_payments - 1) / (
+            monthly_rate * (1 + monthly_rate)**remaining_payments)
+
+        return Decimal(str(round(remaining_balance, 2)))
+
+    def __str__(self):
+        return f"{self.user.username} - {self.address}"
+
+
+class RentalTransaction(models.Model):
+    """Track rental income and expenses for owned properties"""
+    owned_property = models.ForeignKey(
+        UserOwnedProperty, on_delete=models.CASCADE, related_name='transactions')
+
+    TRANSACTION_TYPE_CHOICES = [
+        ('income', 'Income'),
+        ('expense', 'Expense'),
+    ]
+
+    CATEGORY_CHOICES = [
+        # Income categories
+        ('rent', 'Rent Payment'),
+        ('late_fee', 'Late Fee'),
+        ('pet_fee', 'Pet Fee'),
+        ('other_income', 'Other Income'),
+
+        # Expense categories
+        ('mortgage', 'Mortgage Payment'),
+        ('insurance', 'Insurance'),
+        ('taxes', 'Property Taxes'),
+        ('maintenance', 'Maintenance & Repairs'),
+        ('utilities', 'Utilities'),
+        ('management', 'Property Management'),
+        ('advertising', 'Advertising/Marketing'),
+        ('legal', 'Legal Fees'),
+        ('hoa', 'HOA Fees'),
+        ('vacancy', 'Vacancy Loss'),
+        ('other_expense', 'Other Expense'),
+    ]
+
+    transaction_type = models.CharField(
+        max_length=10, choices=TRANSACTION_TYPE_CHOICES)
+    category = models.CharField(max_length=20, choices=CATEGORY_CHOICES)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    date = models.DateField()
+    description = models.TextField(blank=True)
+
+    # Receipt/document tracking
+    receipt_uploaded = models.BooleanField(default=False)
+    receipt_file_path = models.CharField(max_length=500, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-date', '-created_at']
+        indexes = [
+            models.Index(fields=['owned_property', 'transaction_type']),
+            models.Index(fields=['date']),
+            models.Index(fields=['category']),
+        ]
+
+    def __str__(self):
+        return f"{self.get_transaction_type_display()}: ${self.amount} - {self.owned_property.address} ({self.date})"
+
+
+class PortfolioMetrics(models.Model):
+    """Calculated portfolio performance metrics for users"""
+    user = models.OneToOneField(
+        User, on_delete=models.CASCADE, related_name='portfolio_metrics')
+
+    # Portfolio overview
+    total_properties = models.IntegerField(default=0)
+    total_investment = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0)
+    total_equity = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0)
+    total_monthly_income = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0)
+    total_monthly_expenses = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0)
+
+    # Performance metrics
+    portfolio_value = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0)
+    total_appreciation = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0)
+    appreciation_percentage = models.DecimalField(
+        max_digits=6, decimal_places=2, default=0)
+
+    # Cash flow metrics
+    monthly_cash_flow = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0)
+    annual_cash_flow = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0)
+
+    # ROI metrics
+    cash_on_cash_return = models.DecimalField(
+        max_digits=6, decimal_places=2, default=0)  # %
+    total_return_percentage = models.DecimalField(
+        max_digits=6, decimal_places=2, default=0)  # %
+
+    # Risk metrics
+    portfolio_cap_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0)  # %
+    diversification_score = models.DecimalField(
+        max_digits=4, decimal_places=1, default=0)  # 0-10
+
+    # Timestamps
+    calculated_at = models.DateTimeField(auto_now=True)
+
+    def calculate_metrics(self):
+        """Calculate all portfolio metrics for the user"""
+        owned_properties = UserOwnedProperty.objects.filter(user=self.user)
+
+        # Basic counts and totals
+        self.total_properties = owned_properties.count()
+        self.total_investment = sum(
+            prop.purchase_price for prop in owned_properties)
+
+        # Calculate current portfolio value and equity
+        portfolio_value = 0
+        total_equity = 0
+
+        for prop in owned_properties:
+            current_value = prop.current_estimated_value or prop.purchase_price
+            portfolio_value += current_value
+
+            equity = prop.current_equity
+            if equity:
+                total_equity += equity
+            else:
+                # If no loan info, assume full equity
+                total_equity += current_value
+
+        self.portfolio_value = portfolio_value
+        self.total_equity = total_equity
+
+        # Calculate appreciation
+        if self.total_investment > 0:
+            self.total_appreciation = self.portfolio_value - self.total_investment
+            self.appreciation_percentage = (
+                self.total_appreciation / self.total_investment) * 100
+
+        # Calculate cash flow from transactions (last 12 months)
+        from datetime import date, timedelta
+        one_year_ago = date.today() - timedelta(days=365)
+
+        recent_income = sum(
+            transaction.amount for transaction in RentalTransaction.objects.filter(
+                owned_property__user=self.user,
+                transaction_type='income',
+                date__gte=one_year_ago
+            )
+        )
+
+        recent_expenses = sum(
+            transaction.amount for transaction in RentalTransaction.objects.filter(
+                owned_property__user=self.user,
+                transaction_type='expense',
+                date__gte=one_year_ago
+            )
+        )
+
+        annual_cash_flow = recent_income - recent_expenses
+        self.annual_cash_flow = annual_cash_flow
+        self.monthly_cash_flow = annual_cash_flow / 12
+
+        # Calculate monthly totals from recent averages
+        self.total_monthly_income = recent_income / 12
+        self.total_monthly_expenses = recent_expenses / 12
+
+        # Calculate returns
+        total_down_payments = sum(
+            prop.down_payment for prop in owned_properties
+            if prop.down_payment
+        ) or self.total_investment
+
+        if total_down_payments > 0:
+            self.cash_on_cash_return = (
+                annual_cash_flow / total_down_payments) * 100
+
+        if self.total_investment > 0:
+            total_return = self.total_appreciation + annual_cash_flow
+            self.total_return_percentage = (
+                total_return / self.total_investment) * 100
+
+        # Calculate portfolio cap rate
+        if self.portfolio_value > 0:
+            net_operating_income = self.annual_cash_flow
+            self.portfolio_cap_rate = (
+                net_operating_income / self.portfolio_value) * 100
+
+        # Calculate diversification score (simple version based on property types and locations)
+        property_types = set()
+        cities = set()
+
+        for prop in owned_properties:
+            if prop.property_type:
+                property_types.add(prop.property_type)
+            if prop.city:
+                cities.add(prop.city)
+
+        # Simple diversification score: more types and locations = higher score
+        type_diversity = min(len(property_types), 5) * \
+            1  # Max 5 points for property types
+        # Max 5 points for locations
+        location_diversity = min(len(cities), 5) * 1
+        self.diversification_score = type_diversity + location_diversity
+
+        self.save()
+
+    def __str__(self):
+        return f"Portfolio metrics for {self.user.username}"
