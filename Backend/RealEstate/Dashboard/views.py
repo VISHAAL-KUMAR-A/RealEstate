@@ -1758,3 +1758,248 @@ def portfolio_performance_chart_data(request):
         'cash_flow_timeline': cash_flow_data,
         'property_type_distribution': property_type_data
     })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def ai_chat(request):
+    """AI Assistant endpoint for property-specific questions and investment advice"""
+    try:
+        user_query = request.data.get('message', '').strip()
+        if not user_query:
+            return Response({'error': 'Message is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Gather user's property data for context
+        user = request.user
+
+        # Get user's portfolio properties
+        owned_properties = UserOwnedProperty.objects.filter(
+            user=user).select_related('property_ref')
+
+        # Get user's watchlist properties
+        watchlist_properties = Property.objects.filter(
+            userwatchlist__user=user
+        ).select_related('metrics')
+
+        # Get user's deals
+        user_deals = Deal.objects.filter(created_by=user)
+
+        # Get portfolio metrics
+        try:
+            portfolio_metrics = PortfolioMetrics.objects.get(user=user)
+        except PortfolioMetrics.DoesNotExist:
+            portfolio_metrics = None
+
+        # Get recent properties for market analysis
+        recent_properties = Property.objects.filter(
+            city__in=owned_properties.values_list(
+                'property_ref__city', flat=True)
+        ).select_related('metrics')[:10] if owned_properties.exists() else Property.objects.all()[:10]
+
+        # Format context data for AI
+        context_data = {
+            "user_profile": {
+                "username": user.username,
+                "total_properties": owned_properties.count(),
+                "active_deals": user_deals.filter(stage__name__in=['acquisition', 'review', 'active']).count(),
+            },
+            "portfolio_summary": {},
+            "owned_properties": [],
+            "market_data": [],
+            "recent_deals": []
+        }
+
+        # Add portfolio metrics if available
+        if portfolio_metrics:
+            context_data["portfolio_summary"] = {
+                "total_properties": portfolio_metrics.total_properties,
+                "total_investment": float(portfolio_metrics.total_investment),
+                "total_equity": float(portfolio_metrics.total_equity),
+                "monthly_cash_flow": float(portfolio_metrics.monthly_cash_flow),
+                "cash_on_cash_return": float(portfolio_metrics.cash_on_cash_return),
+                "portfolio_cap_rate": float(portfolio_metrics.portfolio_cap_rate),
+                "diversification_score": float(portfolio_metrics.diversification_score)
+            }
+
+        # Add owned properties data
+        for owned_prop in owned_properties:
+            prop_data = {
+                "address": owned_prop.address,
+                "city": owned_prop.city,
+                "state": owned_prop.state,
+                "property_type": owned_prop.property_type,
+                "purchase_price": float(owned_prop.purchase_price),
+                "current_value": float(owned_prop.current_estimated_value) if owned_prop.current_estimated_value else None,
+                "monthly_rent": float(owned_prop.monthly_rent) if owned_prop.monthly_rent else None,
+                "purchase_date": owned_prop.purchase_date.isoformat() if owned_prop.purchase_date else None,
+                "loan_amount": float(owned_prop.loan_amount) if owned_prop.loan_amount else None,
+                "interest_rate": float(owned_prop.interest_rate) if owned_prop.interest_rate else None,
+                "loan_term_years": owned_prop.loan_term_years,
+            }
+
+            # Add property metrics if available
+            if hasattr(owned_prop, 'property_ref') and owned_prop.property_ref and hasattr(owned_prop.property_ref, 'metrics'):
+                metrics = owned_prop.property_ref.metrics
+                prop_data["metrics"] = {
+                    "cap_rate": float(metrics.cap_rate) if metrics.cap_rate else None,
+                    "cash_on_cash_return": float(metrics.cash_on_cash_return) if metrics.cash_on_cash_return else None,
+                    "roi": float(metrics.roi) if metrics.roi else None,
+                    "net_operating_income": float(metrics.net_operating_income) if metrics.net_operating_income else None,
+                    "investment_score": float(metrics.investment_score) if metrics.investment_score else None,
+                    "risk_score": float(metrics.risk_score) if metrics.risk_score else None,
+                }
+
+            context_data["owned_properties"].append(prop_data)
+
+        # Add market data from recent properties
+        for prop in recent_properties:
+            market_prop = {
+                "address": prop.address,
+                "city": prop.city,
+                "state": prop.state,
+                "property_type": prop.property_type,
+                "current_price": float(prop.current_price) if prop.current_price else None,
+                "estimated_rent": float(prop.estimated_rent) if prop.estimated_rent else None,
+                "bedrooms": prop.bedrooms,
+                "bathrooms": float(prop.bathrooms) if prop.bathrooms else None,
+                "square_feet": prop.square_feet,
+                "year_built": prop.year_built,
+            }
+
+            if hasattr(prop, 'metrics'):
+                market_prop["metrics"] = {
+                    "cap_rate": float(prop.metrics.cap_rate) if prop.metrics.cap_rate else None,
+                    "investment_score": float(prop.metrics.investment_score) if prop.metrics.investment_score else None,
+                    "risk_score": float(prop.metrics.risk_score) if prop.metrics.risk_score else None,
+                }
+
+            context_data["market_data"].append(market_prop)
+
+        # Add recent deals
+        for deal in user_deals.order_by('-created_at')[:5]:
+            context_data["recent_deals"].append({
+                # This uses the property method that returns property_ref.address
+                "property_address": deal.address,
+                "deal_type": deal.deal_type,
+                "stage": deal.stage.name if deal.stage else None,
+                "estimated_profit": float(deal.estimated_profit) if deal.estimated_profit else None,
+                "expected_purchase_price": float(deal.expected_purchase_price) if deal.expected_purchase_price else None,
+                "actual_purchase_price": float(deal.actual_purchase_price) if deal.actual_purchase_price else None,
+                "created_at": deal.created_at.isoformat(),
+                "notes": deal.notes
+            })
+
+        # Create AI prompt with context
+        system_prompt = """You are an expert real estate investment advisor AI assistant. You help investors analyze properties, evaluate risks, calculate returns, and make informed investment decisions.
+
+IMPORTANT: Respond appropriately to the context of the user's question:
+- For casual greetings (hello, hi, good morning, etc.), respond politely and ask how you can help with their real estate investments
+- For specific investment questions, provide detailed analysis using the portfolio data
+- Only dive into detailed portfolio analysis when the user specifically asks about their properties, performance, or investment strategy
+
+You have access to the user's current portfolio data, market information, and deal pipeline. Use this context to provide personalized, data-driven advice ONLY when relevant to their question.
+
+Key areas you can help with:
+- NOI (Net Operating Income) calculations and analysis
+- Cap rate evaluation and market comparisons  
+- Cash-on-cash return optimization
+- Risk assessment and mitigation strategies
+- Market analysis and trend identification
+- Portfolio diversification recommendations
+- Deal evaluation and due diligence guidance
+- Property valuation and pricing strategies
+
+When providing financial analysis, be specific and explain your calculations clearly."""
+
+        # Check if the question is real estate related
+        real_estate_keywords = [
+            'property', 'properties', 'real estate', 'investment', 'rental', 'rent',
+            'cap rate', 'noi', 'cash flow', 'portfolio', 'roi', 'valuation', 'market',
+            'deal', 'deals', 'flip', 'buy', 'sell', 'mortgage', 'loan', 'equity',
+            'tenant', 'landlord', 'appreciation', 'risk', 'diversification', 'analysis', 'money'
+        ]
+
+        greetings = ['hi', 'hello', 'hey', 'good morning',
+                     'good afternoon', 'good evening', 'how are you']
+        is_greeting = any(greeting in user_query.lower()
+                          for greeting in greetings)
+        is_real_estate_related = any(keyword in user_query.lower(
+        ) for keyword in real_estate_keywords) or is_greeting
+
+        # If not real estate related, return a polite redirect
+        if not is_real_estate_related:
+            return Response({
+                'message': "I'm a specialized real estate investment assistant. I can help you with property analysis, portfolio management, investment calculations, market trends, and real estate deals. Please ask me something related to real estate investments!",
+                'user_query': user_query,
+                'context_properties_count': 0,
+                'market_data_count': 0
+            })
+
+        # Check if this is a simple greeting
+        is_simple_greeting = is_greeting and len(user_query.split()) <= 3
+
+        if is_simple_greeting:
+            # For simple greetings, send minimal context for faster response
+            user_prompt = f"""
+User Question: {user_query}
+
+Portfolio Summary: {context_data['user_profile']['total_properties']} properties owned
+"""
+        else:
+            # For investment questions, send full context
+            user_prompt = f"""
+User Question: {user_query}
+
+User's Portfolio Context:
+{context_data}
+
+Please provide a comprehensive answer based on the user's specific portfolio and the market data available. Be specific with numbers and calculations when relevant.
+"""
+
+        # Call OpenAI API with timeout and error handling
+        from openai import OpenAI
+        import time
+
+        client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+
+        start_time = time.time()
+        try:
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",  # Faster than GPT-4
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_tokens=300 if is_simple_greeting else 600,  # Reduced for faster responses
+                temperature=0.7,
+                timeout=10  # 10 second timeout
+            )
+
+            response_time = time.time() - start_time
+            logger.info(
+                f"OpenAI API response time: {response_time:.2f} seconds")
+
+        except Exception as openai_error:
+            logger.error(f"OpenAI API error: {openai_error}")
+            return Response({
+                'message': 'Sorry, I\'m having trouble connecting to the AI service right now. Please try again in a moment.',
+                'user_query': user_query,
+                'context_properties_count': len(context_data['owned_properties']),
+                'market_data_count': len(context_data['market_data'])
+            })
+
+        ai_response = response.choices[0].message.content
+
+        return Response({
+            'message': ai_response,
+            'user_query': user_query,
+            'context_properties_count': len(context_data['owned_properties']),
+            'market_data_count': len(context_data['market_data'])
+        })
+
+    except Exception as e:
+        logger.error(f"AI Chat error: {e}")
+        return Response({
+            'error': 'Failed to process chat request',
+            'detail': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

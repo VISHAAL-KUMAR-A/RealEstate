@@ -43,4 +43,7 @@ urlpatterns = [
     path('portfolio/metrics/', views.portfolio_metrics, name='portfolio_metrics'),
     path('portfolio/chart-data/', views.portfolio_performance_chart_data,
          name='portfolio_chart_data'),
+
+    # AI Assistant endpoint
+    path('chat/', views.ai_chat, name='ai_chat'),
 ]
